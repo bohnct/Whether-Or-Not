@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so it opens instantly and works offline.
 // Forecast data is cached by the app itself (localStorage); radar tiles are always live.
-const CACHE = "my-weather-v3";
+const CACHE = "my-weather-v4";
 const SHELL = [
   "./",
   "index.html",
@@ -27,7 +27,7 @@ self.addEventListener("activate", (e) => {
 });
 
 // App files: network first (so updates show immediately), cache when offline.
-// Leaflet + fonts: cache first (versioned, never change).
+// Leaflet: cache first (versioned, never changes).
 // Everything else (forecast API, radar and map tiles) goes straight to the network.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
@@ -39,7 +39,7 @@ self.addEventListener("fetch", (e) => {
         .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); return res; })
         .catch(() => caches.match(e.request, { ignoreSearch: true }))
     );
-  } else if (url.host === "unpkg.com" || url.host.endsWith("fonts.googleapis.com") || url.host.endsWith("fonts.gstatic.com")) {
+  } else if (url.host === "unpkg.com") {
     e.respondWith(
       caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
         const copy = res.clone();

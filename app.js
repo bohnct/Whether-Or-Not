@@ -656,9 +656,10 @@ const RADAR_RAMP = ["#99ccff", "#0099ff", "#00ff66", "#00cc00", "#009900", "#006
 
 // EC regional model (RDPS): sea-level pressure isobars and high / low centres, hourly out to 84 h
 const PRESSURE = {
-  isobars: "RDPS_10km_Pressure_MSL-Contour", isobarStyle: "SeaLevelPressure_4mb_Color",
+  // Black isobars; in night mode the layer is inverted to white by CSS (.isobars)
+  isobars: "RDPS_10km_Pressure_MSL-Contour", isobarStyle: "SeaLevelPressure_4mb",
   centres: "RDPS_10km_HighLowPressure_MSL",
-  centreStyle: () => (document.documentElement.dataset.theme === "night" ? "HighLowPressure_LightBlueRed" : "HighLowPressure_BlueRed"),
+  centreStyle: () => (document.documentElement.dataset.theme === "night" ? "HighLowPressure_White" : "HighLowPressure_Black"),
   stepHours: 6,
 };
 
@@ -792,10 +793,10 @@ const radar = {
       layers: layer, styles: pressure ? PRESSURE.isobarStyle : RADAR[this.type].style,
       format: "image/png", transparent: true, version: "1.3.0", tileSize: 512, opacity: 0, time: wmsTime(t),
       updateWhenZooming: false, // load tiles once the zoom settles, not at every step
+      className: pressure ? "isobars" : "",
     }));
-    // Radar frames are few and short-lived, so preload them all for smooth playback.
-    // Pressure frames are added on demand in show(), so panning only reloads what's on screen.
-    if (!pressure) this.frames.forEach((f) => f.addTo(this.map));
+    // Frames are added to the map on demand in show(): every frame on the map is a full-screen
+    // layer, and holding them all at once uses enough memory to crash mobile browsers.
 
     $("#frameSlider").max = this.frames.length - 1;
     this.show(pressure ? 0 : this.frames.length - 1); // pressure starts at now, radar at the latest scan
@@ -804,11 +805,9 @@ const radar = {
   show(i) {
     this.frames[this.index]?.setOpacity(0);
     this.index = i;
-    if (this.mode === "pressure") {
-      // Keep only the visible frame and the next one (preloading for playback) on the map
-      const next = (i + 1) % this.frames.length;
-      this.frames.forEach((f, k) => (k === i || k === next ? f.addTo(this.map) : f.remove()));
-    }
+    // Keep only the visible frame and the next one (preloaded for playback) on the map
+    const next = (i + 1) % this.frames.length;
+    this.frames.forEach((f, k) => (k === i || k === next ? f.addTo(this.map) : f.remove()));
     this.frames[i]?.setOpacity(this.mode === "pressure" ? 0.95 : settings.radarOpacity);
     $("#frameSlider").value = i;
     const t = this.times[i];
@@ -892,7 +891,7 @@ function applyTheme() {
   const theme = currentTheme();
   if (document.documentElement.dataset.theme === theme) return;
   document.documentElement.dataset.theme = theme;
-  document.querySelector('meta[name="theme-color"]').content = theme === "night" ? "#070b16" : "#e9f1fb";
+  document.querySelector('meta[name="theme-color"]').content = theme === "night" ? "#000000" : "#ffffff";
   radar.applyTheme();
   drawCharts();
 }

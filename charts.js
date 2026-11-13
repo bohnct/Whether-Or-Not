@@ -1,5 +1,6 @@
 /* Time-series charts drawn on <canvas>.
- * Every chart shares one time window, a NOW line, night shading and a scrub cursor.
+ * Every chart shares one time window, a NOW line and a scrub cursor.
+ * Flat style: observed in the text colour, forecast in the chart's accent (CSS --c on the card).
  * Points are [timeMs, value]; bars are [startMs, endMs, value, kind].
  */
 "use strict";
@@ -13,10 +14,14 @@ const Charts = (() => {
     return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
   }
 
-  function colors() {
-    const css = getComputedStyle(document.documentElement);
+  /** Theme colours as seen by this canvas (so each chart picks up its own --c accent). */
+  function colors(el) {
+    const css = getComputedStyle(el);
     const v = (n) => css.getPropertyValue(n).trim();
-    return { text: v("--text"), muted: v("--muted"), line: v("--line"), accent: v("--accent"), accent2: v("--accent-2"), font: v("--font") };
+    return {
+      text: v("--text"), muted: v("--muted"), line: v("--line"), bg: v("--bg"), font: v("--font"),
+      accent: v("--c") || v("--text"), snow: v("--c-snow"), mix: v("--c-mix"),
+    };
   }
 
   const alpha = (hex, a) => {
@@ -76,7 +81,7 @@ const Charts = (() => {
     canvas.width = W * dpr; canvas.height = H * dpr;
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
-    const c = colors();
+    const c = colors(canvas);
     ctx.font = `11px ${c.font}`;
 
     const top = o.dirs ? 26 : 14, bottom = H - 20, left = 0, right = W;
@@ -125,10 +130,10 @@ const Charts = (() => {
 
     // --- Official highs (day periods) and lows (night periods): dashed lines over the hours they apply to
     const markLines = [];
-    ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     for (const m of marks) {
       const x0 = Math.max(x(m.t0), 0), x1 = Math.min(x(m.t1), W), yy = Math.round(y(m.v)) + 0.5;
-      ctx.strokeStyle = alpha(m.hi ? c.accent2 : c.accent, 0.8);
+      ctx.strokeStyle = alpha(c.accent, m.hi ? 0.9 : 0.5);
       ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); ctx.stroke();
       markLines.push({ ...m, x0, x1, yy });
     }
@@ -156,40 +161,36 @@ const Charts = (() => {
     // Second line (dashed), drawn underneath the main line
     const alt = o.alt ? join(o.alt.obs, o.alt.fc) : [];
     if (alt.length) {
-      ctx.setLineDash([5, 4]); ctx.lineWidth = 1.6; ctx.lineJoin = "round";
-      clip(nowX, W, () => { path(alt); ctx.strokeStyle = c.accent2; ctx.stroke(); });
+      ctx.setLineDash([4, 3]); ctx.lineWidth = 1.4; ctx.lineJoin = "round";
+      clip(nowX, W, () => { path(alt); ctx.strokeStyle = c.accent; ctx.stroke(); });
       clip(0, nowX, () => { path(alt); ctx.strokeStyle = c.muted; ctx.stroke(); });
       ctx.setLineDash([]);
     }
 
     if (line.length) {
-      // Forecast (right of NOW): glow line + soft area fill
+      // Forecast (right of NOW): accent line over a faint fill
       clip(nowX, W, () => {
         const g = ctx.createLinearGradient(0, top, 0, bottom);
-        g.addColorStop(0, alpha(c.accent, 0.28)); g.addColorStop(1, alpha(c.accent, 0));
+        g.addColorStop(0, alpha(c.accent, 0.16)); g.addColorStop(1, alpha(c.accent, 0));
         path(line); ctx.lineTo(x(line[line.length - 1][0]), bottom); ctx.lineTo(x(line[0][0]), bottom); ctx.closePath();
         ctx.fillStyle = g; ctx.fill();
-        const lg = ctx.createLinearGradient(nowX, 0, right, 0);
-        lg.addColorStop(0, c.accent); lg.addColorStop(1, c.accent2);
-        path(line); ctx.strokeStyle = lg; ctx.lineWidth = 2.2; ctx.lineJoin = "round";
-        ctx.shadowColor = c.accent; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+        path(line); ctx.strokeStyle = c.accent; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
       });
-      // Observed (left of NOW): plain line
+      // Observed (left of NOW): plain line in the text colour
       clip(0, nowX, () => {
-        path(line); ctx.strokeStyle = c.text; ctx.lineWidth = 2; ctx.lineJoin = "round";
-        ctx.globalAlpha = 0.85; ctx.stroke(); ctx.globalAlpha = 1;
+        path(line); ctx.strokeStyle = c.text; ctx.lineWidth = 1.8; ctx.lineJoin = "round"; ctx.stroke();
       });
     }
 
     // --- High / low labels, centred on their period (haloed so the line never hides them)
     ctx.font = `600 10px ${c.font}`; ctx.lineWidth = 3; ctx.lineJoin = "round";
-    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+    ctx.strokeStyle = c.bg;
     for (const m of markLines) {
       const lx = (Math.max(m.x0, m.t0 < o.now ? nowX + 14 : 0) + m.x1) / 2;
       if (m.x1 - m.x0 < 16 || lx > W - 10) continue;
       const ly = m.hi ? m.yy - 5 : m.yy + 12;
       ctx.strokeText(o.fmt(m.v), lx, ly);
-      ctx.fillStyle = m.hi ? c.accent2 : c.accent; ctx.fillText(o.fmt(m.v), lx, ly);
+      ctx.fillStyle = m.hi ? c.accent : c.muted; ctx.fillText(o.fmt(m.v), lx, ly);
     }
     ctx.font = `11px ${c.font}`;
 
@@ -211,8 +212,8 @@ const Charts = (() => {
     // --- NOW line
     const nx = Math.round(x(o.now)) + 0.5;
     if (nx > 0 && nx < W) {
-      ctx.strokeStyle = c.accent; ctx.lineWidth = 1.5; ctx.shadowColor = c.accent; ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.moveTo(nx, top - 6); ctx.lineTo(nx, bottom); ctx.stroke(); ctx.shadowBlur = 0;
+      ctx.strokeStyle = c.text; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(nx, top - 6); ctx.lineTo(nx, bottom); ctx.stroke();
     }
 
     // --- Scrub cursor
@@ -222,7 +223,8 @@ const Charts = (() => {
       ctx.beginPath(); ctx.moveTo(cx, top - 6); ctx.lineTo(cx, bottom); ctx.stroke(); ctx.setLineDash([]);
       const v = valueAt(line, o.cursor);
       if (v != null && !o.precip) {
-        ctx.fillStyle = c.text; ctx.beginPath(); ctx.arc(cx, y(v), 4, 0, 7); ctx.fill();
+        ctx.fillStyle = c.bg; ctx.strokeStyle = c.text; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, y(v), 3.5, 0, 7); ctx.fill(); ctx.stroke();
       }
     }
   }
@@ -273,8 +275,8 @@ const Charts = (() => {
 
     // Past: observed amount
     if (obsPts.length) clip(0, nowX, () => {
-      const line = area(obsPts, yMm, c.text.startsWith("#") ? c.text : "#888888", 0.18);
-      ctx.strokeStyle = c.text; ctx.globalAlpha = 0.85; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke(line); ctx.globalAlpha = 1;
+      const line = area(obsPts, yMm, c.text, 0.12);
+      ctx.strokeStyle = c.text; ctx.lineWidth = 1.8; ctx.lineJoin = "round"; ctx.stroke(line);
     });
 
     // Future: chance, coloured by precipitation type
@@ -282,19 +284,18 @@ const Charts = (() => {
     if (chance.length && chance[0][0] > o.now) chance[0] = [o.now, ...chance[0].slice(1)];
     const pts = stepPoints(chance, o.now, o.to, (a, b, pct) => pct);
     if (pts.length) clip(nowX, W, () => {
-      const line = area(pts, yPct, c.accent, 0.3);
-      ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.shadowBlur = 6;
+      const line = area(pts, yPct, c.accent, 0.16);
+      ctx.lineWidth = 2; ctx.lineJoin = "round";
       // Each period drawn once in its precipitation-type colour
       let end = nowX;
       for (const [a, b, pct, kind] of chance) {
-        const col = !pct || kind === "rain" ? c.accent : kind === "snow" ? "#9fd8ff" : c.accent2;
+        const col = !pct || kind === "rain" ? c.accent : kind === "snow" ? c.snow : c.mix;
         const x0 = Math.max(x(a), end), x1 = Math.min(x(b), W);
         if (x1 <= x0) continue;
-        clip(x0, x1, () => { ctx.strokeStyle = ctx.shadowColor = col; ctx.stroke(line); });
+        clip(x0, x1, () => { ctx.strokeStyle = col; ctx.stroke(line); });
         end = x1;
       }
-      if (end < W) clip(end, W, () => { ctx.strokeStyle = ctx.shadowColor = c.accent; ctx.stroke(line); });
-      ctx.shadowBlur = 0;
+      if (end < W) clip(end, W, () => { ctx.strokeStyle = c.accent; ctx.stroke(line); });
     });
 
     // Forecast amounts EC gives in the text forecast (e.g. "5–10 mm")
@@ -305,14 +306,6 @@ const Charts = (() => {
       ctx.fillStyle = c.text; ctx.fillText(label, (x0 + x1) / 2, top - 2);
     }
     ctx.font = `11px ${c.font}`;
-  }
-
-  function roundRect(ctx, x, y, w, h) {
-    const r = Math.min(3, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x, y + h); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h);
-    ctx.fill();
   }
 
   return { draw, valueAt, barAt, HOUR, DAY };
