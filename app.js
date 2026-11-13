@@ -691,7 +691,7 @@ const radar = {
     });
     // High / low centres are placed relative to the requested image, so fetch one image for
     // the whole view (tiles would each get their own H / L at their edges)
-    this.centres = L.imageOverlay("data:,", [[0, 0], [1, 1]]);
+    this.centres = L.layerGroup();
     this.map.on("moveend", () => this.updateCentres());
     this.marker = L.marker([0, 0], { icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [16, 16] }) }).addTo(this.map);
 
@@ -791,7 +791,11 @@ const radar = {
     this.frames = this.times.map((t) => L.tileLayer.wms(GEOMET, {
       layers: layer, styles: pressure ? PRESSURE.isobarStyle : RADAR[this.type].style,
       format: "image/png", transparent: true, version: "1.3.0", tileSize: 512, opacity: 0, time: wmsTime(t),
-    }).addTo(this.map));
+      updateWhenZooming: false, // load tiles once the zoom settles, not at every step
+    }));
+    // Radar frames are few and short-lived, so preload them all for smooth playback.
+    // Pressure frames are added on demand in show(), so panning only reloads what's on screen.
+    if (!pressure) this.frames.forEach((f) => f.addTo(this.map));
 
     $("#frameSlider").max = this.frames.length - 1;
     this.show(pressure ? 0 : this.frames.length - 1); // pressure starts at now, radar at the latest scan
@@ -800,6 +804,11 @@ const radar = {
   show(i) {
     this.frames[this.index]?.setOpacity(0);
     this.index = i;
+    if (this.mode === "pressure") {
+      // Keep only the visible frame and the next one (preloading for playback) on the map
+      const next = (i + 1) % this.frames.length;
+      this.frames.forEach((f, k) => (k === i || k === next ? f.addTo(this.map) : f.remove()));
+    }
     this.frames[i]?.setOpacity(this.mode === "pressure" ? 0.95 : settings.radarOpacity);
     $("#frameSlider").value = i;
     const t = this.times[i];
@@ -809,7 +818,11 @@ const radar = {
     this.updateCentres();
   },
 
-  /** One image of the high / low centres for the current view and frame time. */
+  /**
+   * One image of the high / low centres for the current view and frame time.
+   * The new image is loaded alongside the old one and only replaces it once it has arrived,
+   * so the symbols never jump to the wrong place while you pan or zoom.
+   */
   updateCentres() {
     if (!this.map || this.mode !== "pressure" || !this.times[this.index]) return;
     const b = this.map.getBounds(), size = this.map.getSize();
@@ -817,7 +830,16 @@ const radar = {
     const url = `${GEOMET}?service=WMS&version=1.3.0&request=GetMap&layers=${PRESSURE.centres}&styles=${PRESSURE.centreStyle()}` +
       `&crs=EPSG:3857&bbox=${sw.x},${sw.y},${ne.x},${ne.y}&width=${size.x}&height=${size.y}` +
       `&format=image/png&transparent=true&time=${wmsTime(this.times[this.index])}`;
-    this.centres.setBounds(b).setUrl(url);
+    const img = L.imageOverlay(url, b, { interactive: false });
+    img.seq = this.centresSeq = (this.centresSeq || 0) + 1;
+    img.once("load", () => {
+      // Drop older images; if a newer one already arrived, drop this one instead
+      if (img.seq < (this.centresShown || 0)) return this.centres.removeLayer(img);
+      this.centresShown = img.seq;
+      this.centres.eachLayer((old) => old.seq < img.seq && this.centres.removeLayer(old));
+    });
+    img.once("error", () => this.centres.removeLayer(img));
+    this.centres.addLayer(img);
   },
 
   play() {
