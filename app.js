@@ -130,6 +130,36 @@ async function fetchObservations(stationCode, from) {
   })).filter((o) => new Date(o.t).getUTCMinutes() % 10 === 0); // thin 1-minute stations to 10-minute steps
 }
 
+/**
+ * Humidity sensors sometimes stop while the rest of a station keeps reporting. For any gap over
+ * 2 hours, borrow hourly readings from the closest station nearby that was working at the time.
+ */
+async function nearbyHumidity(obs, lat, lon, from) {
+  const gaps = [];
+  let prev = from;
+  for (const t of [...obs.filter((o) => o.rh != null).map((o) => o.t), Date.now()]) {
+    if (t - prev > 2 * HOUR) gaps.push([prev, t]);
+    prev = t;
+  }
+  if (!gaps.length) return null;
+
+  const d = 0.75, inGap = (t) => gaps.some(([a, b]) => t > a && t < b);
+  const { features = [] } = await getJSON(`${EC_API}/swob-realtime/items?f=json&limit=10000&sortby=-date_tm-value` +
+    `&bbox=${lon - d * 1.6},${lat - d},${lon + d * 1.6},${lat + d}&datetime=${new Date(gaps[0][0]).toISOString().slice(0, 19)}Z/..` +
+    `&properties=date_tm-value,rel_hum,stn_nam-value`);
+
+  const stations = {};
+  for (const { properties: p, geometry: g } of features) {
+    const t = Date.parse(p["date_tm-value"]);
+    if (p.rel_hum == null || !inGap(t)) continue;
+    const s = (stations[p["stn_nam-value"]] ||= { km: distanceKm(lat, lon, g.coordinates[1], g.coordinates[0]), hours: {} });
+    s.hours[Math.floor(t / HOUR)] ??= [t, p.rel_hum];
+  }
+  const needed = gaps.reduce((n, [a, b]) => n + (b - a) / HOUR, 0) * 0.7;
+  const best = Object.values(stations).filter((s) => Object.keys(s.hours).length >= needed).sort((a, b) => a.km - b.km)[0];
+  return best ? { points: Object.values(best.hours).sort((a, b) => a[0] - b[0]), gaps } : null;
+}
+
 /** Latest complete PROGNOS run for the nearest forecast station. */
 async function fetchModel(lat, lon) {
   const base = (m) => `${EC_API}/prognos-${m}-realtime/items?f=json`;
@@ -180,6 +210,62 @@ async function fetchModel(lat, lon) {
   };
 }
 
+/**
+ * Expected rain (mm) and snow (cm) from now on, from EC's global model (GDPS) at this location:
+ * [[time, rain so far, snow so far], ...]. Snow is liquid equivalent; 1 mm is about 1 cm of snow.
+ */
+async function fetchExpected(lat, lon) {
+  const d = 0.1, base = `${GEOMET}?service=WMS&version=1.3.0&request=GetFeatureInfo&crs=EPSG:4326` +
+    `&bbox=${lat - d},${lon - d},${lat + d},${lon + d}&width=3&height=3&i=1&j=1&info_format=application/json`;
+  const RAIN = "GDPS_15km_Rain-Accum", SNOW = "GDPS_15km_Snow-Accum";
+
+  // The latest model run, so every value below comes from the same forecast
+  const caps = await (await fetch(`${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&layer=${RAIN}`)).text();
+  const ref = new DOMParser().parseFromString(caps, "text/xml").querySelector('Dimension[name="reference_time"]').getAttribute("default");
+  const run = Date.parse(ref);
+
+  // The server returns no feature where the accumulation is zero
+  const point = async (layer, t) => {
+    const url = `${base}&layers=${layer}&query_layers=${layer}&time=${wmsTime(t)}&dim_reference_time=${ref}`;
+    return (await getJSON(url)).features?.[0]?.properties.value ?? 0;
+  };
+  const start = Math.floor(Date.now() / HOUR) * HOUR;
+  const [startRain, startSnow] = await Promise.all([point(RAIN, start), point(SNOW, start)]);
+
+  // Every 3 h for a day, every 6 h for the next two, then every 12 h out to a week
+  const h0 = Math.round((start - run) / HOUR), hours = [];
+  for (let h = Math.ceil((h0 + 1) / 3) * 3; h <= h0 + 168 && h <= 240; h += 3) {
+    const ahead = h - h0;
+    if (ahead <= 24 || (ahead <= 72 && h % 6 === 0) || h % 12 === 0) hours.push(h);
+  }
+  const values = new Array(hours.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < hours.length) {
+      const i = next++, t = run + hours[i] * HOUR;
+      const [r, s] = await Promise.all([point(RAIN, t), point(SNOW, t)]).catch(() => []);
+      if (r != null) values[i] = [t, r, s];
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+
+  const out = [[Date.now(), 0, 0]];
+  for (const v of values.filter(Boolean)) {
+    const [, r0, s0] = out[out.length - 1];
+    out.push([v[0], Math.max(r0, v[1] - startRain), Math.max(s0, v[2] - startSnow)]);
+  }
+  return out;
+}
+
+/** The expected amounts for a city, reusing a recent download. */
+async function loadExpected(city) {
+  const key = `exp:${city[0]}`, saved = JSON.parse(localStorage.getItem(key) || "null");
+  if (saved && Date.now() - saved.at < HOUR) return saved.list;
+  const list = await fetchExpected(city[2], city[3]);
+  localStorage.setItem(key, JSON.stringify({ at: Date.now(), list }));
+  return list;
+}
+
 function normalize(p) {
   const cc = p.currentConditions || {};
   const hourly = (p.hourlyForecastGroup?.hourlyForecasts || []).map((h) => ({
@@ -227,7 +313,6 @@ function normalize(p) {
         text,
         temp: num(f.temperatures?.temperature?.[0]?.value),
         pop: +(text.match(/(\d+)\s*percent/i)?.[1] || 0),
-        amount: precipAmount(text),
         kind: precipKind(text),
         uv: num(f.uv?.index),
         uvCategory: en(f.uv?.category),
@@ -266,12 +351,6 @@ function precipKind(text) {
   const snow = /snow|flurr/.test(t), rain = /rain|shower|drizzle/.test(t);
   if (/freezing|ice pellet/.test(t) || (snow && rain)) return "mix";
   return snow ? "snow" : "rain";
-}
-
-/** "Rainfall amount 5 to 10 mm." → "5–10 mm" */
-function precipAmount(text) {
-  const m = (text || "").match(/amount\s+(\d+(?:\s*to\s*\d+)?)\s*(mm|cm)/i);
-  return m ? `${m[1].replace(/\s*to\s*/, "–")} ${m[2]}` : null;
 }
 
 const relHumidity = (T, Td) =>
@@ -326,7 +405,7 @@ function offsetAt(anchors, t) {
 }
 
 /** Merge observations, the official forecast and model output into chart series. */
-function buildSeries(wx, obs = [], model = null) {
+function buildSeries(wx, obs = [], model = null, nearby = null) {
   const now = Date.now();
   const lastObs = obs.length ? obs[obs.length - 1].t : now;
   const pick = (k) => obs.filter((o) => o[k] != null).map((o) => [o.t, o[k]]);
@@ -377,7 +456,6 @@ function buildSeries(wx, obs = [], model = null) {
     if (!p.span || p.span[1] <= hourlyEnd) continue;
     chance.push([Math.max(p.span[0], hourlyEnd), p.span[1], p.pop, p.kind]);
   }
-  const amounts = wx.periods.filter((p) => p.span && p.amount).map((p) => [p.span[0], p.span[1], p.amount]);
 
   // Official highs (day period, 6 am–6 pm) and lows (night period, 6 pm–6 am)
   const marks = wx.periods.filter((p) => p.span && p.temp != null)
@@ -385,9 +463,12 @@ function buildSeries(wx, obs = [], model = null) {
 
   return {
     temp: { obs: pick("temp"), fc: tempFc, marks, feelsObs, feelsFc },
-    precip: { obs: obsBars, chance, amounts },
+    precip: { obs: obsBars, chance },
     wind: { obs: pick("ws"), fc: windFc, gustObs, gustFc, dirs: [...pick("wd"), ...after(dirFc)] },
-    humidity: { obs: pick("rh"), fc: humFc },
+    humidity: {
+      obs: [...pick("rh"), ...(nearby?.points || [])].sort((a, b) => a[0] - b[0]),
+      fc: humFc, borrowed: nearby?.gaps || [],
+    },
     pressure: { obs: obs.filter((o) => o.mslp != null).map((o) => [o.t, o.mslp / 10]) },
   };
 }
@@ -457,7 +538,7 @@ const valueAt = (s, t) => Charts.valueAt(extend(s.obs || [], s.fc || []), t);
 /** Chart definitions: how to draw each panel and what its readout says. */
 const CHARTS = [
   {
-    key: "temp", title: "Temperature", key2: "Feels like",
+    key: "temp", title: "Temperature", key2: "Feels",
     opts: (s, win) => ({
       obs: mapV(s.obs, toTemp), fc: mapV(s.fc, toTemp), fmt: (v) => `${Math.round(v)}°`,
       alt: { obs: mapV(s.feelsObs, toTemp), fc: mapV(s.feelsFc, toTemp) },
@@ -473,16 +554,19 @@ const CHARTS = [
   {
     key: "precip", title: "Precipitation",
     opts: (s) => ({ precip: s }),
-    read: (s, t, past) => {
-      if (past) {
-        const b = Charts.barAt(s.obs, t);
-        return b ? `${b[2].toFixed(1)} mm in ${Math.round((b[1] - b[0]) / HOUR)} h` : "0 mm";
+    read: (s, t, past, view) => {
+      const text = ([rain, snow]) => [rain >= 0.1 ? `${Charts.amount(rain)} mm` : "", snow >= 0.1 ? `${Charts.amount(snow)} cm` : ""]
+        .filter(Boolean).join(" + ") || "None";
+      if (view.cursor != null && past) {               // measured from the start of the chart to here
+        const mm = s.obs.reduce((sum, [a, b, v]) => sum + (v * Math.max(0, Math.min(b, t) - Math.max(a, view.from))) / (b - a), 0);
+        return `${Charts.amount(mm)} mm`;
       }
-      // Before the first forecast hour starts, use that hour (matches the line drawn from NOW)
-      const b = Charts.barAt(s.chance, t) ?? (s.chance[0] && t < s.chance[0][0] ? s.chance[0] : null);
-      const a = Charts.barAt(s.amounts, t);
-      if (!b) return "--";
-      return [b[2] ? `${b[2]}% ${b[3]}` : "0%", a?.[2]].filter(Boolean).join(" · ");
+      if (!s.expected?.length) {                       // amounts still loading: show the chance
+        const b = s.chance.find((x) => x[1] > t);
+        return b ? `${b[2]}% chance` : "--";
+      }
+      if (view.cursor != null) return text(Charts.expectedAt(s.expected, t));
+      return { value: text(Charts.expectedAt(s.expected, view.to)), label: view.to - view.now > 2 * DAY ? "Next 7 days" : "Next 24 h" };
     },
   },
   {
@@ -505,7 +589,9 @@ const CHARTS = [
     opts: (s) => ({ obs: s.obs, fc: s.fc, min: 0, max: 100, fmt: (v) => `${Math.round(v)}%` }),
     read: (s, t, past) => {
       const v = valueAt(s, t);
-      return v == null ? "--" : `${Math.round(v)}%`;
+      if (v == null) return "--";
+      const borrowed = (s.borrowed || []).some(([a, b]) => t > a && t <= b + 5 * 60e3);
+      return borrowed ? { value: `${Math.round(v)}%`, label: "Nearby station" } : `${Math.round(v)}%`;
     },
   },
   {
@@ -521,10 +607,7 @@ const CHARTS = [
 function buildChartCards() {
   for (const box of $$(".charts")) {
     box.innerHTML = `
-      <div class="chart-key muted small">
-        <span><i class="k-obs"></i>Observed</span><span><i class="k-fc"></i>Forecast</span>
-        <span><i class="k-range"></i>Official high / low</span>
-      </div>` +
+      <div class="sky-card card"><span class="chart-title">Conditions</span><div class="sky"></div></div>` +
       CHARTS.map((c) => `
       <div class="chart card" data-key="${c.key}">
         <div class="chart-head">
@@ -541,7 +624,9 @@ function buildChartCards() {
       const r = canvas.getBoundingClientRect();
       const [back, ahead] = WINDOWS[box.dataset.window];
       const now = Date.now();
-      state.cursor = now - back * HOUR + ((e.clientX - r.left) / r.width) * (back + ahead) * HOUR;
+      const { left, right } = Charts.GUTTER;
+      const f = Math.min(1, Math.max(0, (e.clientX - r.left - left) / (r.width - left - right)));
+      state.cursor = now - back * HOUR + f * (back + ahead) * HOUR;
       drawCharts();
     });
     const clear = () => { state.cursor = null; drawCharts(); };
@@ -569,14 +654,26 @@ function drawCharts() {
       from: now - back * HOUR, to: now + ahead * HOUR, now, cursor,
       ...def.opts(s, box.dataset.window),
     });
-    card.querySelector(".chart-read b").textContent = def.read(s, t, past);
-    card.querySelector(".chart-read small").textContent = label;
+    const read = def.read(s, t, past, { cursor, now, from: now - back * HOUR, to: now + ahead * HOUR });
+    card.querySelector(".chart-read b").textContent = read.value ?? read;
+    card.querySelector(".chart-read small").textContent = read.label ?? label;
   }
 }
 
 /* ============================================================
  * Rendering
  * ============================================================ */
+/** Weather symbols along the top of Today (every 3 hours) and Week (each day). */
+function renderSky() {
+  const wx = state.wx, now = Date.now();
+  const column = (label, code, t) => `<div><span>${label}</span>${icon(code)}<b>${t == null ? "" : `${temp(t)}°`}</b></div>`;
+  const hours = wx.hourly.filter((h) => h.t > now - HOUR).filter((_, i) => i % 3 === 0).slice(0, 8);
+  $("#view-today .sky").innerHTML = hours.map((h, i) => column(i ? fmtHour(new Date(h.t)) : "Now", h.icon, h.temp)).join("");
+  const days = wx.periods.filter((p, i) => p.span && (!p.night || i === 0)).slice(0, 7);
+  $("#view-week .sky").innerHTML = days.map((p) => column(
+    p.night ? "Tonight" : new Date(p.span[0]).toLocaleDateString([], { weekday: "short" }), p.icon, p.temp)).join("");
+}
+
 /** The Now page: one small square per current value. */
 function renderTiles() {
   const wx = state.wx, c = wx.current, s = state.series, now = Date.now();
@@ -592,15 +689,21 @@ function renderTiles() {
   const reports = s?.precip.obs || [];
   const rain = reports.reduce((sum, [a, b, mm]) => sum + (mm * Math.max(0, b - Math.max(a, now - DAY))) / (b - a), 0);
 
+  // If this station's humidity sensor is out, use the nearby station's reading
+  const out = s?.humidity.borrowed?.some(([, b]) => b > now - 10 * 60e3);
+  const rh = out ? valueAt(s.humidity, now) ?? c.humidity : c.humidity;
+  const g = rh && c.temp != null ? Math.log(rh / 100) + (17.625 * c.temp) / (243.04 + c.temp) : null;
+  const dew = out && g != null ? (243.04 * g) / (17.625 - g) : c.dewpoint;
+
   const tiles = [
     ["temp", "Feels like", deg(feels), ""],
-    ["temp", "Hi / Lo", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
+    ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
     ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? chance[3].replace(/^./, (m) => m.toUpperCase()) : "Next hour"],
     ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
     ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : ""],
     ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm"],
-    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, ""],
-    ["hum", "Dew point", deg(c.dewpoint), ""],
+    ["hum", "Humidity", rh == null ? "--" : `${Math.round(rh)}%`, out ? "Nearby station" : ""],
+    ["hum", "Dew point", deg(dew), out ? "Nearby station" : ""],
     ["pres", "Pressure", c.pressure == null ? "--" : c.pressure.toFixed(1), ["kPa", c.tendency].filter(Boolean).join(" · ")],
     ["sun", "UV index", uv ? `${uv.uv}` : "--", (uv?.uvCategory || uv?.label || "").replace(/^./, (m) => m.toUpperCase())],
     ["sun", "Sunrise", time(wx.sunrise), ""],
@@ -634,8 +737,9 @@ function render() {
   $("#nowCond").textContent = c.cond;
   renderTiles();
 
-  // Today: the official text forecast for the next two periods
-  $("#todayText").innerHTML = wx.periods.slice(0, 2).map((p) => `<p><b>${p.label}</b> ${p.text}</p>`).join("");
+  // The official text forecast for the next two periods
+  renderSky();
+  $("#nowText").innerHTML = wx.periods.slice(0, 2).map((p) => `<p><b>${p.label}</b> ${p.text}</p>`).join("");
 
   drawCharts();
   applyTheme();
@@ -669,14 +773,27 @@ async function load() {
 
     // History and model data arrive a moment later
     const maxBack = Math.max(...Object.values(WINDOWS).map((w) => w[0]));
-    const [obs, model] = await Promise.all([
-      fetchObservations(state.wx.current.stationCode, Date.now() - maxBack * HOUR).catch(() => []),
+    const from = Date.now() - maxBack * HOUR;
+    const observed = fetchObservations(state.wx.current.stationCode, from).catch(() => []);
+    const [obs, model, nearby] = await Promise.all([
+      observed,
       fetchModel(state.city[2], state.city[3]).catch(() => null),
+      observed.then((o) => nearbyHumidity(o, state.city[2], state.city[3], from)).catch(() => null),
     ]);
     state.modelStation = model?.station;
-    state.series = buildSeries(state.wx, obs, model);
-    localStorage.setItem(cacheKey, JSON.stringify({ wx: state.wx, series: state.series, modelStation: state.modelStation }));
+    state.series = buildSeries(state.wx, obs, model, nearby);
+    const save = () => localStorage.setItem(cacheKey, JSON.stringify({ wx: state.wx, series: state.series, modelStation: state.modelStation }));
+    save();
     render();
+
+    // Expected rain and snow take a few more seconds; the charts fill in when they arrive
+    const city = state.city;
+    loadExpected(city).then((list) => {
+      if (state.city !== city) return;
+      state.series.precip.expected = list;
+      save();
+      drawCharts();
+    }).catch(() => {});
     if (radar.map) radar.centre();
   } catch (err) {
     console.error(err);

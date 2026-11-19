@@ -7,6 +7,7 @@
 
 const Charts = (() => {
   const HOUR = 3600e3, DAY = 24 * HOUR;
+  const GUTTER = { left: 32, right: 6 }; // the y scale sits in the left gutter, clear of the data
 
   /* ---------- Helpers ---------- */
   function niceStep(range, count) {
@@ -79,7 +80,7 @@ const Charts = (() => {
    *         obs: [[t,v]], fc: [[t,v]], dirs: [[t,deg]],
    *         alt: { obs, fc }  (second, dashed line — e.g. wind gusts),
    *         marks: [{ t0, t1, v, hi }]  (official high / low, drawn over the period it applies to),
-   *         precip: { obs: [[t0,t1,mm]], chance: [[t0,t1,pct,kind]], amounts: [[t0,t1,label]] },
+   *         precip: { obs: [[t0,t1,mm]], chance: [[t0,t1,pct,kind]], expected: [[t,rainMm,snowCm]] },
    *         min, max, fmt: (v)=>string, maxGap: ms (longest step still joined by a line) }
    */
   function draw(canvas, o) {
@@ -92,7 +93,7 @@ const Charts = (() => {
     const c = colors(canvas);
     ctx.font = `11px ${c.font}`;
 
-    const top = o.dirs ? 26 : 14, bottom = H - 20, left = 0, right = W;
+    const top = o.dirs || o.precip ? 26 : 14, bottom = H - 20, left = GUTTER.left, right = W - GUTTER.right;
     const x = (t) => left + ((t - o.from) / (o.to - o.from)) * (right - left);
 
     // --- Y scale
@@ -111,36 +112,37 @@ const Charts = (() => {
     const y = (v) => yBot - ((v - lo) / (hi - lo || 1)) * (yBot - yTop);
 
     // --- Grid + y labels
-    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.fillStyle = c.muted; ctx.textAlign = "left";
+    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.fillStyle = c.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     if (!o.precip) {
       for (let v = lo; v <= hi + 1e-9; v += step) {
         ctx.beginPath(); ctx.moveTo(left, Math.round(y(v)) + 0.5); ctx.lineTo(right, Math.round(y(v)) + 0.5); ctx.stroke();
-        ctx.fillText(o.fmt ? o.fmt(v) : Math.round(v), 4, y(v) - 4);
+        ctx.fillText(o.fmt ? o.fmt(v) : Math.round(v), left - 5, y(v));
       }
     }
+    ctx.textBaseline = "alphabetic";
 
     // --- X ticks
     ctx.textAlign = "center";
     for (const t of ticks(o.from, o.to)) {
-      if (t.major) {
+      if (t.major && x(t.t) >= left && x(t.t) <= right) {
         ctx.strokeStyle = c.line; ctx.beginPath(); ctx.moveTo(x(t.t) + 0.5, top - 6); ctx.lineTo(x(t.t) + 0.5, bottom); ctx.stroke();
       }
       const lx = x(t.at);
-      if (lx < 14 || lx > W - 14) continue;
+      if (lx < left + 10 || lx > right - 10) continue;
       ctx.fillStyle = t.major ? c.text : c.muted;
       ctx.fillText(t.label, lx, H - 5);
     }
 
-    // --- Precipitation: observed amount (left of NOW, mm/h) and chance (right of NOW, %) as step lines
+    // --- Precipitation: measured and expected amounts
     const nowX = x(o.now);
     const clip = (fromX, toX, fn) => { ctx.save(); ctx.beginPath(); ctx.rect(fromX, 0, toX - fromX, H); ctx.clip(); fn(); ctx.restore(); };
-    if (o.precip) drawPrecip(ctx, o, { x, top, bottom, W, nowX, clip, c });
+    if (o.precip) drawPrecip(ctx, o, { x, top, bottom, left, right, nowX, clip, c });
 
     // --- Official highs (day periods) and lows (night periods): dashed lines over the hours they apply to
     const markLines = [];
     ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     for (const m of marks) {
-      const x0 = Math.max(x(m.t0), 0), x1 = Math.min(x(m.t1), W), yy = Math.round(y(m.v)) + 0.5;
+      const x0 = Math.max(x(m.t0), left), x1 = Math.min(x(m.t1), right), yy = Math.round(y(m.v)) + 0.5;
       ctx.strokeStyle = alpha(c.accent, m.hi ? 0.9 : 0.5);
       ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); ctx.stroke();
       markLines.push({ ...m, x0, x1, yy });
@@ -170,14 +172,14 @@ const Charts = (() => {
     const alt = o.alt ? join(o.alt.obs, o.alt.fc) : [];
     if (alt.length) {
       ctx.setLineDash([4, 3]); ctx.lineWidth = 1.4; ctx.lineJoin = "round";
-      clip(nowX, W, () => { path(alt); ctx.strokeStyle = c.accent; ctx.stroke(); });
-      clip(0, nowX, () => { path(alt); ctx.strokeStyle = c.muted; ctx.stroke(); });
+      clip(nowX, right, () => { path(alt); ctx.strokeStyle = c.accent; ctx.stroke(); });
+      clip(left, nowX, () => { path(alt); ctx.strokeStyle = c.muted; ctx.stroke(); });
       ctx.setLineDash([]);
     }
 
     if (line.length) {
       // Forecast (right of NOW): accent line over a faint fill
-      clip(nowX, W, () => {
+      clip(nowX, right, () => {
         const g = ctx.createLinearGradient(0, top, 0, bottom);
         g.addColorStop(0, alpha(c.accent, 0.16)); g.addColorStop(1, alpha(c.accent, 0));
         path(line); ctx.lineTo(x(line[line.length - 1][0]), bottom); ctx.lineTo(x(line[0][0]), bottom); ctx.closePath();
@@ -185,7 +187,7 @@ const Charts = (() => {
         path(line); ctx.strokeStyle = c.accent; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
       });
       // Observed (left of NOW): plain line in the text colour
-      clip(0, nowX, () => {
+      clip(left, nowX, () => {
         path(line); ctx.strokeStyle = c.text; ctx.lineWidth = 1.8; ctx.lineJoin = "round"; ctx.stroke();
       });
     }
@@ -194,8 +196,8 @@ const Charts = (() => {
     ctx.font = `600 10px ${c.font}`; ctx.lineWidth = 3; ctx.lineJoin = "round";
     ctx.strokeStyle = c.bg;
     for (const m of markLines) {
-      const lx = (Math.max(m.x0, m.t0 < o.now ? nowX + 14 : 0) + m.x1) / 2;
-      if (m.x1 - m.x0 < 16 || lx > W - 10) continue;
+      const lx = (Math.max(m.x0, m.t0 < o.now ? nowX + 14 : left) + m.x1) / 2;
+      if (m.x1 - m.x0 < 16 || lx > right - 10) continue;
       const ly = m.hi ? m.yy - 5 : m.yy + 12;
       ctx.strokeText(o.fmt(m.v), lx, ly);
       ctx.fillStyle = m.hi ? c.accent : c.muted; ctx.fillText(o.fmt(m.v), lx, ly);
@@ -205,9 +207,9 @@ const Charts = (() => {
     // --- Wind direction arrows (point the way the wind blows)
     if (o.dirs?.length) {
       ctx.strokeStyle = c.muted; ctx.lineWidth = 1.4;
-      const every = Math.max(28, W / 14);
-      for (let px = every / 2; px < W; px += every) {
-        const t = o.from + (px / W) * (o.to - o.from);
+      const every = Math.max(28, (right - left) / 12);
+      for (let px = left + every / 2; px < right; px += every) {
+        const t = o.from + ((px - left) / (right - left)) * (o.to - o.from);
         const near = o.dirs.reduce((a, b) => (Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a));
         if (Math.abs(near[0] - t) > 3 * HOUR) continue;
         const r = ((near[1] + 180) * Math.PI) / 180;
@@ -219,7 +221,7 @@ const Charts = (() => {
 
     // --- NOW line
     const nx = Math.round(x(o.now)) + 0.5;
-    if (nx > 0 && nx < W) {
+    if (nx > left && nx < right) {
       ctx.strokeStyle = c.text; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(nx, top - 6); ctx.lineTo(nx, bottom); ctx.stroke();
     }
@@ -237,84 +239,87 @@ const Charts = (() => {
     }
   }
 
-  /** Step line through [t0, t1, value] segments; gaps fall back to zero. */
-  function stepPoints(segs, from, to, f) {
-    const pts = [];
-    let t = from;
-    for (const [a, b, ...rest] of [...segs].sort((p, q) => p[0] - q[0])) {
-      if (b <= from || a >= to) continue;
-      const v = f(a, b, ...rest), s = Math.max(a, from), e = Math.min(b, to);
-      if (s > t) pts.push([t, 0], [s, 0]);
-      pts.push([s, v], [e, v]);
-      t = e;
-    }
-    if (t < to) pts.push([t, 0], [to, 0]);
-    return pts;
-  }
-
-  function drawPrecip(ctx, o, { x, top, bottom, W, nowX, clip, c }) {
-    const p = o.precip;
-    const rate = (a, b, mm) => mm / ((b - a) / HOUR);
-    const obsPts = stepPoints(p.obs || [], o.from, o.now, rate);
-    const mmMax = Math.max(1, Math.ceil(Math.max(...obsPts.map((q) => q[1]))));
-    const yMm = (v) => bottom - (v / mmMax) * (bottom - top);
-    const yPct = (v) => bottom - (v / 100) * (bottom - top);
-
-    // Grid + axis labels: mm/h on the left (past), % on the right (future)
-    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.fillStyle = c.muted; ctx.font = `11px ${c.font}`;
-    for (const f of [0, 0.5, 1]) {
-      const yy = Math.round(bottom - f * (bottom - top)) + 0.5;
-      ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
-      if (f === 0) continue;
-      if (nowX > 60) { ctx.textAlign = "left"; ctx.fillText(`${+(mmMax * f).toFixed(1)} mm/h`, 4, yy - 4); }
-      if (W - nowX > 50) { ctx.textAlign = "right"; ctx.fillText(`${100 * f}%`, W - 4, yy - 4); }
-    }
-    ctx.textAlign = "center";
-
-    const area = (pts, yf, col, a0) => {
-      ctx.beginPath(); pts.forEach(([t, v], i) => (i ? ctx.lineTo(x(t), yf(v)) : ctx.moveTo(x(t), yf(v))));
-      const line = new Path2D(); pts.forEach(([t, v], i) => (i ? line.lineTo(x(t), yf(v)) : line.moveTo(x(t), yf(v))));
-      ctx.lineTo(x(pts[pts.length - 1][0]), bottom); ctx.lineTo(x(pts[0][0]), bottom); ctx.closePath();
-      const g = ctx.createLinearGradient(0, top, 0, bottom);
-      g.addColorStop(0, alpha(col, a0)); g.addColorStop(1, alpha(col, 0));
-      ctx.fillStyle = g; ctx.fill();
-      return line;
-    };
-
-    // Past: observed amount
-    if (obsPts.length) clip(0, nowX, () => {
-      const line = area(obsPts, yMm, c.text, 0.12);
-      ctx.strokeStyle = c.text; ctx.lineWidth = 1.8; ctx.lineJoin = "round"; ctx.stroke(line);
-    });
-
-    // Future: chance, coloured by precipitation type
-    const chance = (p.chance || []).filter((s) => s[1] > o.now);
-    if (chance.length && chance[0][0] > o.now) chance[0] = [o.now, ...chance[0].slice(1)];
-    const pts = stepPoints(chance, o.now, o.to, (a, b, pct) => pct);
-    if (pts.length) clip(nowX, W, () => {
-      const line = area(pts, yPct, c.accent, 0.16);
-      ctx.lineWidth = 2; ctx.lineJoin = "round";
-      // Each period drawn once in its precipitation-type colour
-      let end = nowX;
-      for (const [a, b, pct, kind] of chance) {
-        const col = !pct || kind === "rain" ? c.accent : kind === "snow" ? c.snow : c.mix;
-        const x0 = Math.max(x(a), end), x1 = Math.min(x(b), W);
-        if (x1 <= x0) continue;
-        clip(x0, x1, () => { ctx.strokeStyle = col; ctx.stroke(line); });
-        end = x1;
+  /** Expected [rain mm, snow cm] accumulated by time t, from [[t, rain, snow], ...]. */
+  function expectedAt(list, t) {
+    if (!list?.length || t <= list[0][0]) return [0, 0];
+    for (let i = 1; i < list.length; i++) {
+      if (list[i][0] >= t) {
+        const [a, r0, s0] = list[i - 1], [b, r1, s1] = list[i], f = (t - a) / (b - a || 1);
+        return [r0 + (r1 - r0) * f, s0 + (s1 - s0) * f];
       }
-      if (end < W) clip(end, W, () => { ctx.strokeStyle = c.accent; ctx.stroke(line); });
-    });
-
-    // Forecast amounts EC gives in the text forecast (e.g. "5–10 mm")
-    ctx.font = `600 10px ${c.font}`;
-    for (const [a, b, label] of p.amounts || []) {
-      const x0 = Math.max(x(a), nowX + 4), x1 = Math.min(x(b), W);
-      if (x1 - x0 < ctx.measureText(label).width + 6) continue;
-      ctx.fillStyle = c.text; ctx.fillText(label, (x0 + x1) / 2, top - 2);
     }
-    ctx.font = `11px ${c.font}`;
+    return list[list.length - 1].slice(1);
   }
 
-  return { draw, valueAt, barAt, HOUR, DAY };
+  const amount = (v) => (v < 10 ? v.toFixed(1) : `${Math.round(v)}`);
+
+  /** Measured total building up to NOW, then expected rain and snow building up from NOW. */
+  function drawPrecip(ctx, o, { x, top, bottom, left, right, nowX, clip, c }) {
+    const p = o.precip;
+    let sum = 0;
+    const measured = [[o.from, 0]];
+    for (const [a, b, mm] of [...(p.obs || [])].sort((q, r) => q[1] - r[1])) {
+      if (b <= o.from || a >= o.now) continue;
+      sum += (mm * (Math.min(b, o.now) - Math.max(a, o.from))) / (b - a);
+      measured.push([Math.min(b, o.now), sum]);
+    }
+    measured.push([o.now, sum]);
+
+    const list = p.expected || [];
+    const last = list.length ? Math.min(o.to, list[list.length - 1][0]) : o.now;
+    const times = [o.now, ...list.map((e) => e[0]).filter((t) => t > o.now && t < last), last];
+    const [rainEnd, snowEnd] = expectedAt(list, last);
+
+    // Amount scale (1 mm of rain lines up with about 1 cm of snow)
+    const peak = Math.max(sum, rainEnd, snowEnd, 4), step = niceStep(peak, 3), max = Math.ceil(peak / step) * step;
+    const y = (v) => bottom - (v / max) * (bottom - top);
+    ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.fillStyle = c.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let v = 0; v <= max + 1e-9; v += step) {
+      const yy = Math.round(y(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(left, yy); ctx.lineTo(right, yy); ctx.stroke();
+      ctx.fillText(+v.toFixed(1), left - 5, yy);
+    }
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "left"; ctx.font = `9px ${c.font}`;
+    ctx.fillText("mm/cm", 0, 11);
+
+    const trace = (pts, col, fill) => clip(left, right, () => {
+      const line = new Path2D();
+      pts.forEach(([t, v], i) => (i ? line.lineTo(x(t), y(v)) : line.moveTo(x(t), y(v))));
+      if (fill) {
+        const area = new Path2D(line);
+        area.lineTo(x(pts[pts.length - 1][0]), bottom); area.lineTo(x(pts[0][0]), bottom); area.closePath();
+        ctx.fillStyle = alpha(col, 0.14); ctx.fill(area);
+      }
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke(line);
+    });
+
+    trace(measured, c.text, false);
+    const rain = times.map((t) => [t, expectedAt(list, t)[0]]), snow = times.map((t) => [t, expectedAt(list, t)[1]]);
+    if (rainEnd >= 0.1) trace(rain, c.accent, true);
+    if (snowEnd >= 0.1) trace(snow, c.snow, true);
+
+    // Totals written at the end of each line
+    ctx.font = `700 11px ${c.font}`; ctx.textAlign = "right"; ctx.lineWidth = 3; ctx.strokeStyle = c.bg;
+    const tag = (text, yy, col) => { ctx.strokeText(text, x(last) - 2, yy); ctx.fillStyle = col; ctx.fillText(text, x(last) - 2, yy); };
+    const both = rainEnd >= 0.1 && snowEnd >= 0.1 && Math.abs(y(rainEnd) - y(snowEnd)) < 14;
+    if (rainEnd >= 0.1) tag(`${amount(rainEnd)} mm`, Math.max(top + 8, y(rainEnd) - 6), c.accent);
+    if (snowEnd >= 0.1) tag(`${amount(snowEnd)} cm`, both ? y(snowEnd) + 15 : Math.max(top + 8, y(snowEnd) - 6), c.snow);
+    if (list.length && rainEnd < 0.1 && snowEnd < 0.1) {
+      ctx.font = `11px ${c.font}`; ctx.textAlign = "center"; ctx.fillStyle = c.muted;
+      ctx.fillText("None expected", (nowX + right) / 2, bottom - 8);
+    }
+
+    // Chance of precipitation along the top
+    ctx.font = `10px ${c.font}`; ctx.textAlign = "center"; ctx.fillStyle = c.muted;
+    const span = o.to - o.now <= 30 * HOUR ? 6 * HOUR : DAY;
+    for (let t = o.now; t < o.to - HOUR; t += span) {
+      const end = Math.min(t + span, o.to);
+      const pct = Math.max(0, ...(p.chance || []).filter((s) => s[1] > t && s[0] < end).map((s) => s[2]));
+      if (pct) ctx.fillText(`${pct}%`, (x(t) + x(end)) / 2, 11);
+    }
+    if (nowX - left > 60) { ctx.textAlign = "right"; ctx.fillText("Chance", nowX - 5, 11); }
+    ctx.font = `11px ${c.font}`; ctx.textAlign = "center";
+  }
+
+  return { draw, valueAt, barAt, expectedAt, amount, GUTTER, HOUR, DAY };
 })();

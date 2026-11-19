@@ -122,21 +122,20 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 .now-text p { margin: 2px 0; }
 
 /* Now page: one small square per value */
-.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-@media (max-width: 350px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-.tile { aspect-ratio: 1; min-width: 0; padding: 7px 6px; display: flex; flex-direction: column; gap: 3px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tile { aspect-ratio: 1; min-width: 0; padding: 10px 9px; display: flex; flex-direction: column; gap: 3px; }
 .tile[data-kind="temp"] { --c: var(--c-temp); }
 .tile[data-kind="precip"] { --c: var(--c-precip); }
 .tile[data-kind="wind"] { --c: var(--c-wind); }
 .tile[data-kind="hum"] { --c: var(--c-hum); }
 .tile[data-kind="pres"] { --c: var(--c-pres); }
 .tile[data-kind="sun"] { --c: #ffb000; }
-.tile-label { font-size: .76rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); white-space: nowrap; overflow: hidden; }
-.tile-label::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 3px; background: var(--c); vertical-align: 2px; }
-.tile-value { margin-top: auto; font-size: 1rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tile-note { min-height: .8rem; font-size: .6rem; line-height: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-label { font-size: .84rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); white-space: nowrap; overflow: hidden; }
+.tile-label::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; background: var(--c); vertical-align: 2px; }
+.tile-value { margin-top: auto; font-size: 1.5rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-note { min-height: .95rem; font-size: .72rem; line-height: .95rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.text-forecast { padding: 12px 14px; margin-bottom: 12px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
+.text-forecast { padding: 12px 14px; margin-top: 8px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
 .text-forecast p { margin: 4px 0; }
 .text-forecast b { color: var(--text); font-weight: 600; margin-right: 4px; }
 
@@ -152,12 +151,14 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 
 /* ---------- Charts ---------- */
 .charts { display: flex; flex-direction: column; gap: 8px; }
-.chart-key { display: flex; gap: 14px; padding: 0 2px; }
-.chart-key span { display: flex; align-items: center; gap: 6px; }
-.chart-key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; }
-.chart-key .k-obs { border-color: var(--text); }
-.chart-key .k-fc { border-image: linear-gradient(90deg, var(--c-temp), var(--c-precip), var(--c-wind)) 1; }
-.chart-key .k-range { border-top-style: dashed; border-color: var(--muted); }
+
+/* Weather symbols along the top of Today and Week */
+.sky-card { --c: #ffb000; padding: 10px 10px 8px; }
+.sky { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin-top: 8px; }
+.sky div { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.sky span { font-size: .68rem; color: var(--muted); white-space: nowrap; }
+.sky svg { width: 32px; height: 32px; }
+.sky b { font-size: .84rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Each chart's accent colour (read by charts.js from --c) */
 .chart[data-key="temp"] { --c: var(--c-temp); }
@@ -168,9 +169,9 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 
 .chart { padding: 10px 10px 4px; }
 .chart-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px 6px; }
-.chart-title { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+.chart-title { white-space: nowrap; font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
 .chart-title::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; background: var(--c); vertical-align: 0; }
-.chart-read { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+.chart-read { display: flex; flex-direction: column; align-items: flex-end; flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chart-read b { font-weight: 600; font-size: 1rem; }
 .chart-read small { color: var(--muted); font-size: .72rem; min-width: 3em; text-align: right; }
 .chart canvas { width: 100%; height: 130px; display: block; touch-action: pan-y; cursor: crosshair; }
