@@ -1325,7 +1325,6 @@ function showView(view) {
   state.view = view;
   $$(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   $$(".tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
-  $("#settingsBtn").classList.toggle("active", view === "settings");
   const chartView = view in WINDOWS;
   document.body.classList.toggle("map-open", view === "radar");
   closeLocations();
@@ -1422,13 +1421,6 @@ function init() {
 
   $$(".tabbar button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   bindLocations();
-  $("#settingsBtn").addEventListener("click", () => showView(state.view === "settings" ? "now" : "settings"));
-
-  $("#themeBtn").addEventListener("click", () => {
-    settings.theme = document.documentElement.dataset.theme === "night" ? "day" : "night";
-    saveSettings();
-    applyTheme();
-  });
 
   // Radar controls
   $$("#mapMode button").forEach((b) => b.addEventListener("click", () => radar.setMode(b.dataset.mode)));
