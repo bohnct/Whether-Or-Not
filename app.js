@@ -203,6 +203,13 @@ function normalize(p) {
       cond: en(cc.condition) || hourly[0]?.cond || "",
       icon: num(cc.iconCode?.value) ?? hourly[0]?.icon,
       feels: num(cc.windChill?.value) ?? num(cc.humidex?.value),
+      humidity: num(cc.relativeHumidity?.value),
+      dewpoint: num(cc.dewpoint?.value),
+      wind: num(cc.wind?.speed?.value),
+      gust: num(cc.wind?.gust?.value),
+      dir: en(cc.wind?.direction?.value),
+      pressure: num(cc.pressure?.value),
+      tendency: en(cc.pressure?.tendency),
       station: en(cc.station?.value),
       stationCode: en(cc.station?.code),
     },
@@ -222,6 +229,8 @@ function normalize(p) {
         pop: +(text.match(/(\d+)\s*percent/i)?.[1] || 0),
         amount: precipAmount(text),
         kind: precipKind(text),
+        uv: num(f.uv?.index),
+        uvCategory: en(f.uv?.category),
         wind: num(f.winds?.periods?.[0]?.speed?.value),
         dir: num(f.winds?.periods?.[0]?.bearing?.value),
         gust: Math.max(0, ...(f.winds?.periods || []).map((w) => num(w.gust?.value) || 0)) || null,
@@ -435,7 +444,6 @@ function icon(code) {
  * Charts
  * ============================================================ */
 const WINDOWS = {            // [hours back, hours ahead]
-  now: [6, 6],
   today: [24, 24],
   week: [48, 168],
 };
@@ -569,6 +577,43 @@ function drawCharts() {
 /* ============================================================
  * Rendering
  * ============================================================ */
+/** The Now page: one small square per current value. */
+function renderTiles() {
+  const wx = state.wx, c = wx.current, s = state.series, now = Date.now();
+  const deg = (v) => (v == null ? "--" : `${temp(v)}°`);
+  const time = (t) => (t ? fmtTime(new Date(t)) : "--");
+
+  const feels = (s?.temp.feelsObs && valueAt({ obs: s.temp.feelsObs, fc: s.temp.feelsFc }, now))
+    ?? c.feels ?? (c.temp != null ? feelsLike(c.temp, c.wind ?? 0, c.humidity) : null);
+  const high = wx.periods.find((p) => !p.night), low = wx.periods.find((p) => p.night);
+  const uv = wx.periods.find((p) => p.uv != null);
+  const chance = s?.precip.chance?.find((b) => b[1] > now);
+  // Rain measured over the last 24 hours (a report covering part of that window counts in part)
+  const reports = s?.precip.obs || [];
+  const rain = reports.reduce((sum, [a, b, mm]) => sum + (mm * Math.max(0, b - Math.max(a, now - DAY))) / (b - a), 0);
+
+  const tiles = [
+    ["temp", "Feels like", deg(feels), "Apparent temp"],
+    ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
+    ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? `Chance of ${chance[3]}` : "Chance next hour"],
+    ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
+    ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : "Steady wind"],
+    ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm measured"],
+    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, "Relative"],
+    ["hum", "Dew point", deg(c.dewpoint), "Air moisture"],
+    ["pres", "Pressure", c.pressure == null ? "--" : c.pressure.toFixed(1), ["kPa", c.tendency].filter(Boolean).join(" · ")],
+    ["sun", "UV index", uv ? `${uv.uv}` : "--", (uv?.uvCategory || uv?.label || "").replace(/^./, (m) => m.toUpperCase())],
+    ["sun", "Sunrise", time(wx.sunrise), "Today"],
+    ["sun", "Sunset", time(wx.sunset), "Today"],
+  ];
+  $("#nowTiles").innerHTML = tiles.map(([kind, label, value, note]) => `
+    <div class="tile card" data-kind="${kind}">
+      <span class="tile-label">${label}</span>
+      <b class="tile-value">${value}</b>
+      <span class="tile-note">${note}</span>
+    </div>`).join("");
+}
+
 function render() {
   const wx = state.wx;
   if (!wx) return;
@@ -584,16 +629,12 @@ function render() {
     `<a class="alert ${w.type}" href="${w.url}" target="_blank" rel="noopener"><b>${w.type?.toUpperCase()}</b>${w.title}</a>`
   ).join("");
 
-  // Now: compact current conditions
-  const firstDay = wx.periods.find((p) => !p.night), firstNight = wx.periods.find((p) => p.night);
+  // Now: current conditions and value tiles
   $("#nowIcon").innerHTML = icon(c.icon);
   $("#nowTemp").textContent = temp(c.temp ?? wx.hourly[0]?.temp);
   $("#nowCond").textContent = c.cond;
-  $("#nowFeels").textContent = [
-    c.feels != null ? `Feels ${temp(c.feels)}°` : "",
-    firstDay?.temp != null ? `H ${temp(firstDay.temp)}°` : "",
-    firstNight?.temp != null ? `L ${temp(firstNight.temp)}°` : "",
-  ].filter(Boolean).join(" · ");
+  $("#nowFeels").textContent = c.station ? `Observed at ${c.station}` : "";
+  renderTiles();
 
   // Today: the official text forecast for the next two periods
   $("#todayText").innerHTML = wx.periods.slice(0, 2).map((p) => `<p><b>${p.label}</b> ${p.text}</p>`).join("");
@@ -1214,7 +1255,7 @@ function showView(view) {
   $$(".tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   $("#settingsBtn").classList.toggle("active", view === "settings");
   const chartView = view in WINDOWS;
-  $("#updated").hidden = !chartView;
+  $("#updated").hidden = !(chartView || view === "now");
   closeLocations();
   state.cursor = null;
   if (view === "radar") radar.onShow();

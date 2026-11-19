@@ -112,6 +112,20 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 .now-temp .deg { font-size: 1.5rem; vertical-align: top; }
 .now-text p { margin: 2px 0; }
 
+/* Now page: one small square per value */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tile { aspect-ratio: 1; min-width: 0; padding: 9px; display: flex; flex-direction: column; justify-content: space-between; }
+.tile[data-kind="temp"] { --c: var(--c-temp); }
+.tile[data-kind="precip"] { --c: var(--c-precip); }
+.tile[data-kind="wind"] { --c: var(--c-wind); }
+.tile[data-kind="hum"] { --c: var(--c-hum); }
+.tile[data-kind="pres"] { --c: var(--c-pres); }
+.tile[data-kind="sun"] { --c: #ffb000; }
+.tile-label { font-size: .62rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.tile-label::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; background: var(--c); vertical-align: 1px; }
+.tile-value { font-size: 1.3rem; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-note { font-size: .66rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .text-forecast { padding: 12px 14px; margin-bottom: 12px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
 .text-forecast p { margin: 4px 0; }
 .text-forecast b { color: var(--text); font-weight: 600; margin-right: 4px; }
@@ -252,6 +266,8 @@ select:focus, input[type="search"]:focus { border-color: var(--text); }
 }
 .tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .68rem; color: var(--muted); letter-spacing: .04em; padding: 8px 0; }
 .tabbar button.on { color: var(--text); font-weight: 600; }
+.tabbar svg { width: 24px; height: 24px; stroke-width: 1.4; stroke-linecap: butt; }
+.tabbar svg .mark { stroke-width: 1.2; }
 
 /* ---------- Weather icons: line art, with a touch of colour for sun and precipitation ---------- */
 .wx { stroke-width: 2.4; }
