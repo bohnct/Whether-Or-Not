@@ -75,24 +75,36 @@ svg .fill { fill: currentColor; stroke: none; }
 .icon-btn.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 [data-theme="night"] .i-sun, [data-theme="day"] .i-moon { display: none; }
 
+/* Place name: tap to change location */
+.place-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; text-align: left; }
+.place-text { min-width: 0; display: flex; flex-direction: column; }
+.place-text b, .place-text small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.place-text b { font-size: 1.3rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+.place-text small { font-size: .72rem; color: var(--muted); }
+.place-btn svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
+
+.loc-sheet { position: fixed; inset: var(--top-h) 0 var(--tab-h); z-index: 1100; background: rgba(0, 0, 0, .55); }
+.loc-panel { background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px 14px; max-height: 100%; overflow-y: auto; }
+.loc-panel input { width: 100%; font-size: 1rem; padding: 10px 12px; }
+#locList { list-style: none; margin: 8px 0 0; padding: 0; }
+#locList button { width: 100%; display: flex; justify-content: space-between; gap: 12px; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+#locList button b { font-weight: 500; }
+#locList button span { color: var(--muted); font-size: .85rem; }
+#locList button.on b::before { content: "✓ "; }
+
 /* Segmented controls: the selected option is inverted */
-.loc-switch, .seg {
+.seg {
   display: flex; padding: 3px; gap: 3px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
 }
-.loc-switch button, .seg button {
+.seg button {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 12px; border-radius: 2px; font-size: .85rem; color: var(--muted);
 }
-.loc-switch svg { width: 15px; height: 15px; }
-.loc-switch button.on, .seg button.on { background: var(--text); color: var(--bg); }
+.seg button.on { background: var(--text); color: var(--bg); }
 
 /* ---------- Views ---------- */
-main { padding: calc(var(--top-h) + 4px) 16px calc(var(--tab-h) + 16px); max-width: 560px; margin: 0 auto; }
-
-.place { margin: 10px 2px 14px; }
-.place h1 { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: -.01em; }
-.place p { margin: 2px 0 0; font-size: .82rem; }
+main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-width: 560px; margin: 0 auto; }
 
 .now-summary { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 12px; }
 .now-summary svg { width: 52px; height: 52px; }
@@ -172,7 +184,7 @@ main { padding: calc(var(--top-h) + 4px) 16px calc(var(--tab-h) + 16px); max-wid
 .legend .unit { grid-column: 1 / span 2; text-align: center; margin-top: 6px; }
 
 /* Season map */
-.season-bar { display: flex; gap: 8px; }
+.season-bar { display: flex; flex-wrap: wrap; gap: 6px; max-width: 245px; }
 .season-bar select { background: var(--surface); padding: 6px 8px; }
 .legend.season { display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 8px; white-space: nowrap; }
 .legend.season .ramp { width: 40px; height: 8px; }

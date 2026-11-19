@@ -1,4 +1,4 @@
-# Nightly: add yesterday's rainfall to the growing-season totals (data/season.json)
+# Nightly: add yesterday's rainfall to the growing-season totals (data/rain*)
 name: Season rainfall
 
 on:
@@ -22,5 +22,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/season.json
+          git add data
           git diff --cached --quiet || (git commit -m "Update season rainfall data" && git push)

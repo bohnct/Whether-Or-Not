@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so it opens instantly and works offline.
 // Forecast data is cached by the app itself (localStorage); radar tiles are always live.
-const CACHE = "my-weather-v4";
+const CACHE = "my-weather-v5";
 const SHELL = [
   "./",
   "index.html",
@@ -31,7 +31,7 @@ self.addEventListener("activate", (e) => {
 // Everything else (forecast API, radar and map tiles) goes straight to the network.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET") return;
+  if (e.request.method !== "GET" || url.pathname.endsWith(".bin")) return; // rainfall slices go straight to the network
 
   if (url.origin === location.origin) {
     e.respondWith(
