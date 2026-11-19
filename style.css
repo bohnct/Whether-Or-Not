@@ -91,8 +91,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .loc-now:has(b:empty) { display: none; }
 .loc-now b { font-weight: 600; }
 .loc-now span { font-size: .8rem; color: var(--muted); line-height: 1.35; }
-.loc-panel input { width: 100%; font-size: 1rem; padding: 10px 12px; }
-#locList { list-style: none; margin: 8px 0 0; padding: 0; }
+#locList { list-style: none; margin: 0; padding: 0; }
 #locList button { width: 100%; display: flex; justify-content: space-between; gap: 12px; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--line); }
 #locList button b { font-weight: 500; }
 #locList button span { color: var(--muted); font-size: .85rem; }
@@ -263,7 +262,6 @@ select:focus, input[type="search"]:focus { border-color: var(--text); }
 #cityResults li:first-child { border-top: 1px solid var(--line); }
 #cityResults li:hover { background: var(--text); color: var(--bg); }
 #cityResults li span { color: var(--muted); font-size: .8rem; margin-left: 6px; }
-.btn { width: 100%; padding: 10px; border-radius: var(--radius); background: var(--text); color: var(--bg); font-weight: 600; }
 
 .switch { appearance: none; width: 40px; height: 22px; border-radius: 11px; background: var(--line); position: relative; cursor: pointer; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 1px var(--line); transition: transform .15s; }

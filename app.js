@@ -718,8 +718,6 @@ async function load() {
     if (state.loc === "home") {
       if (!settings.home) return openLocations();
       state.city = settings.home;
-    } else if (state.loc === "city") {
-      state.city = state.picked;
     } else {
       const [lat, lon] = await getPosition();
       state.lastPos = [lat, lon];
@@ -770,9 +768,8 @@ async function load() {
   }
 }
 
-function setLoc(loc, city) {
+function setLoc(loc) {
   state.loc = loc;
-  state.picked = city || state.picked;
   closeLocations();
   load();
 }
@@ -782,18 +779,10 @@ function locationRow(attrs, title, note, on) {
   return `<li><button ${attrs}${on ? ' class="on"' : ""}><b>${title}</b><span>${note}</span></button></li>`;
 }
 
-function renderLocations(query = "") {
-  const found = searchCities(query);
-  state.locResults = found;
-  $("#locList").innerHTML = query.trim().length >= 2
-    ? found.map((c, i) => locationRow(`data-i="${i}"`, c[0], c[1], false)).join("") || '<li class="muted small">No matching forecast locations</li>'
-    : locationRow('data-loc="current"', "Current location", "Use this device's GPS", state.loc === "current") +
-      locationRow('data-loc="home"', "Home", settings.home ? `${settings.home[0]}, ${settings.home[1]}` : "Choose one in Settings", state.loc === "home");
-}
-
 function openLocations() {
-  $("#locSearch").value = "";
-  renderLocations();
+  $("#locList").innerHTML =
+    locationRow('data-loc="current"', "Current location", "Use this device's GPS", state.loc === "current") +
+    locationRow('data-loc="home"', "Home", settings.home ? `${settings.home[0]}, ${settings.home[1]}` : "Choose one in Settings", state.loc === "home");
   $("#locSheet").hidden = false;
 }
 
@@ -801,12 +790,10 @@ function closeLocations() { $("#locSheet").hidden = true; }
 
 function bindLocations() {
   $("#placeBtn").addEventListener("click", () => ($("#locSheet").hidden ? openLocations() : closeLocations()));
-  $("#locSearch").addEventListener("input", (e) => renderLocations(e.target.value));
   $("#locSheet").addEventListener("click", (e) => {
     if (e.target.id === "locSheet") return closeLocations();
     const row = e.target.closest("button");
     if (!row) return;
-    if (row.dataset.i) return setLoc("city", state.locResults[row.dataset.i]);
     if (row.dataset.loc === "home" && !settings.home) { closeLocations(); return showView("settings"); }
     setLoc(row.dataset.loc);
   });
@@ -1406,14 +1393,6 @@ function bindSettings() {
   $("#cityResults").addEventListener("click", (e) => {
     const li = e.target.closest("li");
     if (li) setHome(results[li.dataset.i]);
-  });
-  $("#useCurrentAsHome").addEventListener("click", async () => {
-    try {
-      const [lat, lon] = await getPosition();
-      setHome(nearestCity(lat, lon));
-    } catch {
-      toast("Couldn't get your location — check location permission");
-    }
   });
 }
 
