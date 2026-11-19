@@ -130,36 +130,6 @@ async function fetchObservations(stationCode, from) {
   })).filter((o) => new Date(o.t).getUTCMinutes() % 10 === 0); // thin 1-minute stations to 10-minute steps
 }
 
-/**
- * Humidity sensors sometimes stop while the rest of a station keeps reporting. For any gap over
- * 2 hours, borrow hourly readings from the closest station nearby that was working at the time.
- */
-async function nearbyHumidity(obs, lat, lon, from) {
-  const gaps = [];
-  let prev = from;
-  for (const t of [...obs.filter((o) => o.rh != null).map((o) => o.t), Date.now()]) {
-    if (t - prev > 2 * HOUR) gaps.push([prev, t]);
-    prev = t;
-  }
-  if (!gaps.length) return null;
-
-  const d = 0.75, inGap = (t) => gaps.some(([a, b]) => t > a && t < b);
-  const { features = [] } = await getJSON(`${EC_API}/swob-realtime/items?f=json&limit=10000&sortby=-date_tm-value` +
-    `&bbox=${lon - d * 1.6},${lat - d},${lon + d * 1.6},${lat + d}&datetime=${new Date(gaps[0][0]).toISOString().slice(0, 19)}Z/..` +
-    `&properties=date_tm-value,rel_hum,stn_nam-value`);
-
-  const stations = {};
-  for (const { properties: p, geometry: g } of features) {
-    const t = Date.parse(p["date_tm-value"]);
-    if (p.rel_hum == null || !inGap(t)) continue;
-    const s = (stations[p["stn_nam-value"]] ||= { km: distanceKm(lat, lon, g.coordinates[1], g.coordinates[0]), hours: {} });
-    s.hours[Math.floor(t / HOUR)] ??= [t, p.rel_hum];
-  }
-  const needed = gaps.reduce((n, [a, b]) => n + (b - a) / HOUR, 0) * 0.7;
-  const best = Object.values(stations).filter((s) => Object.keys(s.hours).length >= needed).sort((a, b) => a.km - b.km)[0];
-  return best ? { points: Object.values(best.hours).sort((a, b) => a[0] - b[0]), gaps } : null;
-}
-
 /** Latest complete PROGNOS run for the nearest forecast station. */
 async function fetchModel(lat, lon) {
   const base = (m) => `${EC_API}/prognos-${m}-realtime/items?f=json`;
@@ -405,7 +375,7 @@ function offsetAt(anchors, t) {
 }
 
 /** Merge observations, the official forecast and model output into chart series. */
-function buildSeries(wx, obs = [], model = null, nearby = null) {
+function buildSeries(wx, obs = [], model = null) {
   const now = Date.now();
   const lastObs = obs.length ? obs[obs.length - 1].t : now;
   const pick = (k) => obs.filter((o) => o[k] != null).map((o) => [o.t, o[k]]);
@@ -465,10 +435,7 @@ function buildSeries(wx, obs = [], model = null, nearby = null) {
     temp: { obs: pick("temp"), fc: tempFc, marks, feelsObs, feelsFc },
     precip: { obs: obsBars, chance },
     wind: { obs: pick("ws"), fc: windFc, gustObs, gustFc, dirs: [...pick("wd"), ...after(dirFc)] },
-    humidity: {
-      obs: [...pick("rh"), ...(nearby?.points || [])].sort((a, b) => a[0] - b[0]),
-      fc: humFc, borrowed: nearby?.gaps || [],
-    },
+    humidity: { obs: pick("rh"), fc: humFc },
     pressure: { obs: obs.filter((o) => o.mslp != null).map((o) => [o.t, o.mslp / 10]) },
   };
 }
@@ -586,12 +553,11 @@ const CHARTS = [
   },
   {
     key: "humidity", title: "Humidity",
-    opts: (s) => ({ obs: s.obs, fc: s.fc, min: 0, max: 100, fmt: (v) => `${Math.round(v)}%` }),
+    // Humidity sensors can drop out on their own: show that as a gap rather than bridging it
+    opts: (s) => ({ obs: s.obs, fc: s.fc, min: 0, max: 100, fmt: (v) => `${Math.round(v)}%`, maxGap: 2.5 * HOUR }),
     read: (s, t, past) => {
-      const v = valueAt(s, t);
-      if (v == null) return "--";
-      const borrowed = (s.borrowed || []).some(([a, b]) => t > a && t <= b + 5 * 60e3);
-      return borrowed ? { value: `${Math.round(v)}%`, label: "Nearby station" } : `${Math.round(v)}%`;
+      const v = Charts.valueAt(extend(s.obs, s.fc), t, 2.5 * HOUR);
+      return v == null ? "--" : `${Math.round(v)}%`;
     },
   },
   {
@@ -689,12 +655,6 @@ function renderTiles() {
   const reports = s?.precip.obs || [];
   const rain = reports.reduce((sum, [a, b, mm]) => sum + (mm * Math.max(0, b - Math.max(a, now - DAY))) / (b - a), 0);
 
-  // If this station's humidity sensor is out, use the nearby station's reading
-  const out = s?.humidity.borrowed?.some(([, b]) => b > now - 10 * 60e3);
-  const rh = out ? valueAt(s.humidity, now) ?? c.humidity : c.humidity;
-  const g = rh && c.temp != null ? Math.log(rh / 100) + (17.625 * c.temp) / (243.04 + c.temp) : null;
-  const dew = out && g != null ? (243.04 * g) / (17.625 - g) : c.dewpoint;
-
   const tiles = [
     ["temp", "Feels like", deg(feels), ""],
     ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
@@ -702,8 +662,8 @@ function renderTiles() {
     ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
     ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : ""],
     ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm"],
-    ["hum", "Humidity", rh == null ? "--" : `${Math.round(rh)}%`, out ? "Nearby station" : ""],
-    ["hum", "Dew point", deg(dew), out ? "Nearby station" : ""],
+    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, ""],
+    ["hum", "Dew point", deg(c.dewpoint), ""],
     ["pres", "Pressure", c.pressure == null ? "--" : c.pressure.toFixed(1), ["kPa", c.tendency].filter(Boolean).join(" · ")],
     ["sun", "UV index", uv ? `${uv.uv}` : "--", (uv?.uvCategory || uv?.label || "").replace(/^./, (m) => m.toUpperCase())],
     ["sun", "Sunrise", time(wx.sunrise), ""],
@@ -773,15 +733,12 @@ async function load() {
 
     // History and model data arrive a moment later
     const maxBack = Math.max(...Object.values(WINDOWS).map((w) => w[0]));
-    const from = Date.now() - maxBack * HOUR;
-    const observed = fetchObservations(state.wx.current.stationCode, from).catch(() => []);
-    const [obs, model, nearby] = await Promise.all([
-      observed,
+    const [obs, model] = await Promise.all([
+      fetchObservations(state.wx.current.stationCode, Date.now() - maxBack * HOUR).catch(() => []),
       fetchModel(state.city[2], state.city[3]).catch(() => null),
-      observed.then((o) => nearbyHumidity(o, state.city[2], state.city[3], from)).catch(() => null),
     ]);
     state.modelStation = model?.station;
-    state.series = buildSeries(state.wx, obs, model, nearby);
+    state.series = buildSeries(state.wx, obs, model);
     const save = () => localStorage.setItem(cacheKey, JSON.stringify({ wx: state.wx, series: state.series, modelStation: state.modelStation }));
     save();
     render();

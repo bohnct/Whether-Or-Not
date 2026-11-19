@@ -31,12 +31,12 @@ const Charts = (() => {
   };
 
   /** Linear interpolation of a value at time t in a sorted point series. */
-  function valueAt(pts, t) {
+  function valueAt(pts, t, maxGap = 7 * HOUR) {
     if (!pts?.length || t < pts[0][0] || t > pts[pts.length - 1][0]) return null;
     for (let i = 1; i < pts.length; i++) {
       if (pts[i][0] >= t) {
         const [t0, v0] = pts[i - 1], [t1, v1] = pts[i];
-        if (t1 - t0 > 7 * HOUR) return null; // don't bridge big gaps
+        if (t1 - t0 > maxGap) return null; // don't bridge big gaps
         return v0 + ((v1 - v0) * (t - t0)) / (t1 - t0 || 1);
       }
     }
@@ -231,7 +231,7 @@ const Charts = (() => {
       const cx = Math.round(x(o.cursor)) + 0.5;
       ctx.strokeStyle = c.text; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.moveTo(cx, top - 6); ctx.lineTo(cx, bottom); ctx.stroke(); ctx.setLineDash([]);
-      const v = valueAt(line, o.cursor);
+      const v = valueAt(line, o.cursor, o.maxGap);
       if (v != null && !o.precip) {
         ctx.fillStyle = c.bg; ctx.strokeStyle = c.text; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(cx, y(v), 3.5, 0, 7); ctx.fill(); ctx.stroke();
