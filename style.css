@@ -120,17 +120,16 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 
 /* Now page: one small square per value */
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.tile { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; border-color: var(--c); }
+.tile { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-rows: 18px 32px 16px; align-content: center; justify-items: center; align-items: center; gap: 4px; text-align: center; border-color: var(--c); }
 .tile[data-kind="temp"] { --c: var(--c-temp); }
 .tile[data-kind="precip"] { --c: var(--c-precip); }
 .tile[data-kind="wind"] { --c: var(--c-wind); }
 .tile[data-kind="hum"] { --c: var(--c-hum); }
 .tile[data-kind="pres"] { --c: var(--c-pres); }
 .tile[data-kind="sun"] { --c: #ffb000; }
-.tile-label { max-width: 100%; font-size: .84rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); white-space: nowrap; overflow: hidden; }
-.tile-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tile-note:empty { display: none; }
-.tile-note { max-width: 100%; font-size: .72rem; line-height: .95rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-label { max-width: 100%; line-height: 18px; font-size: .84rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); white-space: nowrap; overflow: hidden; }
+.tile-value { line-height: 32px; font-size: 1.5rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-note { max-width: 100%; font-size: .72rem; line-height: 16px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .text-forecast { padding: 12px 14px; margin-top: 8px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
 .text-forecast p { margin: 4px 0; }
