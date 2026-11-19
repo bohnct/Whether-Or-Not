@@ -818,8 +818,8 @@ const RADAR_RAMP = ["#99ccff", "#0099ff", "#00ff66", "#00cc00", "#009900", "#006
 
 // EC regional model (RDPS): sea-level pressure isobars and high / low centres, hourly out to 84 h
 const PRESSURE = {
-  // Black isobars; in night mode the layer is inverted to white by CSS (.isobars)
-  isobars: "RDPS_10km_Pressure_MSL-Contour", isobarStyle: "SeaLevelPressure_4mb",
+  // EC's coloured isobars: blue for low pressure through green and yellow to orange for high
+  isobars: "RDPS_10km_Pressure_MSL-Contour", isobarStyle: "SeaLevelPressure_4mb_Color",
   centres: "RDPS_10km_HighLowPressure_MSL",
   centreStyle: () => (document.documentElement.dataset.theme === "night" ? "HighLowPressure_White" : "HighLowPressure_Black"),
   stepHours: 6,
@@ -932,7 +932,7 @@ const radar = {
         <div><b class="hi">H</b>High</div>
         <div><b class="lo">L</b>Low</div>
         <div><i class="iso"></i>Isobars</div>
-        <div class="unit">every 4 hPa</div>`;
+        <div class="unit">Low to high</div>`;
       return;
     }
     const cfg = RADAR[this.type];
