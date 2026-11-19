@@ -111,6 +111,18 @@ const Charts = (() => {
     const yTop = top + (marks.length ? 14 : 0), yBot = bottom - (marks.length ? 14 : 0);
     const y = (v) => yBot - ((v - lo) / (hi - lo || 1)) * (yBot - yTop);
 
+    // --- Weekends: a faint band on multi-day charts (Saturday 00:00 to Monday 00:00)
+    if (o.to - o.from > 3 * DAY && o.to - o.from <= 20 * DAY) {
+      ctx.fillStyle = alpha(c.text, 0.045);
+      const d = new Date(o.from - DAY); d.setHours(0, 0, 0, 0);
+      for (; +d < o.to; d.setDate(d.getDate() + 1)) {
+        if (d.getDay() !== 6) continue;
+        const monday = new Date(d); monday.setDate(d.getDate() + 2);
+        const x0 = Math.max(x(+d), left), x1 = Math.min(x(+monday), right);
+        if (x1 > x0) ctx.fillRect(x0, top - 6, x1 - x0, bottom - top + 6);
+      }
+    }
+
     // --- Grid + y labels
     ctx.strokeStyle = c.line; ctx.lineWidth = 1; ctx.fillStyle = c.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     if (!o.precip) {
