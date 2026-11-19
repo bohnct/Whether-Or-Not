@@ -47,14 +47,6 @@ const Charts = (() => {
   /** Time-axis labels suited to the window length. */
   function ticks(from, to) {
     const span = to - from, out = [];
-    if (span > 20 * DAY) { // months, labelled mid-month
-      const d = new Date(from); d.setDate(1); d.setHours(0, 0, 0, 0);
-      for (; +d <= to; d.setMonth(d.getMonth() + 1)) {
-        const next = new Date(d); next.setMonth(d.getMonth() + 1);
-        out.push({ t: +d, major: true, label: d.toLocaleDateString([], { month: "short" }), at: (Math.max(+d, from) + Math.min(+next, to)) / 2 });
-      }
-      return out;
-    }
     const step = span <= 14 * HOUR ? 2 * HOUR : span <= 50 * HOUR ? 6 * HOUR : DAY;
     const start = new Date(from); start.setMinutes(0, 0, 0);
     if (step === DAY) start.setHours(0);
@@ -112,7 +104,7 @@ const Charts = (() => {
     const y = (v) => yBot - ((v - lo) / (hi - lo || 1)) * (yBot - yTop);
 
     // --- Weekends: a faint band on multi-day charts (Saturday 00:00 to Monday 00:00)
-    if (o.to - o.from > 3 * DAY && o.to - o.from <= 20 * DAY) {
+    if (o.to - o.from > 3 * DAY) {
       ctx.fillStyle = alpha(c.text, 0.045);
       const d = new Date(o.from - DAY); d.setHours(0, 0, 0, 0);
       for (; +d < o.to; d.setDate(d.getDate() + 1)) {

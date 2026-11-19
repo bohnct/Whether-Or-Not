@@ -21,7 +21,7 @@ const DEFAULTS = {
   startLoc: "current",  // current | home
   home: null,           // [name, province, lat, lon]
   radarType: "auto",    // auto | rain | snow
-  mapMode: "radar",     // radar | pressure | season
+  mapMode: "radar",     // radar | pressure
   radarOpacity: 0.8,
   radarSpeed: 500,
   showLabels: true,
@@ -837,7 +837,7 @@ async function layerTimes(layer) {
 
 const radar = {
   map: null, base: null, labels: null, frames: [], times: [], index: 0, timer: null, refreshTimer: null,
-  mode: settings.mapMode || "radar",
+  mode: settings.mapMode === "pressure" ? "pressure" : "radar",
 
   init() {
     this.map = L.map("map", { zoomControl: false, attributionControl: true, minZoom: 3, maxZoom: 12 });
@@ -875,7 +875,6 @@ const radar = {
     if (!state.city) { this.map.setView([56, -96], 4); return; }
     const ll = state.loc === "current" && state.lastPos ? state.lastPos : [state.city[2], state.city[3]];
     this.marker.setLatLng(ll);
-    if (!initial && this.mode === "season") { season.followLocation(); return; }
     // Animating a hidden (zero-size) map produces NaN coordinates, so jump instead
     if (initial || state.view !== "radar") this.map.setView(ll, initial ? 7 : this.map.getZoom());
     else this.map.flyTo(ll, Math.max(this.map.getZoom(), 7), { duration: 0.8 });
@@ -901,19 +900,9 @@ const radar = {
     saveSettings();
     $$("#mapMode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
     $("#radarType").hidden = mode !== "radar";
-    $("#seasonBar").hidden = $("#seasonCard").hidden = mode !== "season";
-    $(".player").hidden = mode === "season";
     mode === "radar" ? this.coverage.addTo(this.map) : this.coverage.remove();
     mode === "pressure" ? this.centres.addTo(this.map) : this.centres.remove();
-    if (mode === "season") {
-      this.stop();
-      this.frames.forEach((f) => f.remove());
-      this.frames = []; this.times = [];
-      season.enter(this.map);
-    } else {
-      season.leave();
-      this.setType(this.type);
-    }
+    this.setType(this.type);
   },
 
   async setType(type) {
@@ -924,7 +913,6 @@ const radar = {
   },
 
   renderLegend() {
-    if (this.mode === "season") return; // drawn by season.draw()
     const legend = $("#legend");
     legend.className = this.mode === "pressure" ? "legend pressure" : "legend";
     if (this.mode === "pressure") {
@@ -1048,246 +1036,6 @@ const radar = {
 };
 
 /* ============================================================
- * Season map: growing-season rainfall for any selected area in southern Canada
- * Totals are pre-calculated nightly by scripts/season.py. The app reads only the small slice of
- * data/rain-*.bin around the selected area (HTTP Range requests), so a new area loads instantly.
- * ============================================================ */
-const season = {
-  meta: null, tiles: new Map(), area: null, year: null, show: "mm", size: 50, followed: null, request: 0,
-  layer: L.layerGroup(), labels: L.layerGroup(),
-
-  async enter(map) {
-    this.map = map;
-    this.layer.addTo(map);
-    map.on("zoomend", this.onZoom, this);
-    map.on("click", this.onTap, this);
-    $("#seasonInfo").textContent = "Loading…";
-    try {
-      this.meta ??= await (await fetch("data/rain.json", { cache: "no-cache" })).json();
-    } catch {
-      $("#seasonInfo").textContent = "Season data unavailable offline";
-      return;
-    }
-    const years = [...this.meta.years, this.meta.current.year].reverse().map(String);
-    this.year ??= years[0];
-    $("#seasonYear").innerHTML = years.map((y) => `<option${y === this.year ? " selected" : ""}>${y}</option>`).join("");
-
-    const saved = settings.seasonArea;
-    if (saved) { this.size = saved.size; this.followed = saved.city; }
-    this.markButtons();
-    if (saved && saved.city === state.city?.[0]) this.select(saved.lat, saved.lon);
-    else this.useLocation();
-  },
-
-  leave() {
-    this.map?.off("zoomend", this.onZoom, this).off("click", this.onTap, this);
-    this.layer.remove(); this.labels.remove();
-    this.request++;
-  },
-
-  location() {
-    if (state.loc === "current" && state.lastPos) return state.lastPos;
-    return state.city ? [state.city[2], state.city[3]] : null;
-  },
-
-  useLocation() {
-    const ll = this.location();
-    if (!ll) return;
-    this.followed = state.city[0];
-    this.select(ll[0], ll[1]);
-  },
-
-  /** Move the area when the app's location changes (not on every background refresh). */
-  followLocation() {
-    if (this.meta && state.city && state.city[0] !== this.followed) this.useLocation();
-  },
-
-  onTap(e) { this.select(e.latlng.lat, e.latlng.lng); },
-  setYear(y) { this.year = y; this.draw(); },
-  setShow(s) { this.show = s; this.markButtons(); this.draw(); },
-  setSize(km) { this.size = km; this.markButtons(); if (this.area) this.select(this.area.lat, this.area.lon); },
-
-  markButtons() {
-    $$("#seasonShow button").forEach((b) => b.classList.toggle("on", b.dataset.show === this.show));
-    $$("#seasonSize button").forEach((b) => b.classList.toggle("on", +b.dataset.size === this.size));
-  },
-
-  /** Read two byte ranges' worth of one tile: every finished season plus the latest one. */
-  tile(t) {
-    if (this.tiles.has(t)) return this.tiles.get(t);
-    const { grid, season: s, years, updated } = this.meta;
-    const record = grid.tile ** 2 + s.days;
-    const read = async (file, start, count) => {
-      const from = start * 2, to = from + count * 2;
-      const res = await fetch(`data/${file}?v=${encodeURIComponent(updated)}`, { headers: { Range: `bytes=${from}-${to - 1}` } });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const buf = await res.arrayBuffer();
-      return new Uint16Array(res.status === 206 ? buf : buf.slice(from, to)); // 200: server sent the whole file
-    };
-    const job = Promise.all([
-      read("rain-archive.bin", t * years.length * record, years.length * record),
-      read("rain-current.bin", t * record, record),
-    ]).then(([archive, current]) => {
-      const out = {};
-      years.forEach((y, i) => (out[y] = archive.subarray(i * record, (i + 1) * record)));
-      out[this.meta.current.year] = current;
-      return out;
-    });
-    job.catch(() => this.tiles.delete(t));
-    this.tiles.set(t, job);
-    return job;
-  },
-
-  /** Grid cells whose centres fall inside the selected square (at least the tapped cell). */
-  cellsFor(lat, lon) {
-    const g = this.meta.grid, dLat = (g.lat1 - g.lat0) / g.rows, dLon = (g.lon1 - g.lon0) / g.cols;
-    const halfLat = this.size / 2 / 111.2, halfLon = this.size / 2 / (111.2 * Math.cos((lat * Math.PI) / 180));
-    const cell = (r, c) => ({
-      tile: Math.floor(r / g.tile) * Math.floor(g.cols / g.tile) + Math.floor(c / g.tile),
-      slot: (r % g.tile) * g.tile + (c % g.tile),
-      bounds: [[g.lat1 - (r + 1) * dLat, g.lon0 + c * dLon], [g.lat1 - r * dLat, g.lon0 + (c + 1) * dLon]],
-    });
-    const cells = [];
-    for (let r = 0; r < g.rows; r++) {
-      const cLat = g.lat1 - (r + 0.5) * dLat;
-      if (Math.abs(cLat - lat) > halfLat) continue;
-      for (let c = 0; c < g.cols; c++) {
-        if (Math.abs(g.lon0 + (c + 0.5) * dLon - lon) <= halfLon) cells.push(cell(r, c));
-      }
-    }
-    return cells.length ? cells : [cell(Math.floor((g.lat1 - lat) / dLat), Math.floor((lon - g.lon0) / dLon))];
-  },
-
-  async select(lat, lon) {
-    const g = this.meta.grid;
-    if (lat < g.lat0 || lat >= g.lat1 || lon < g.lon0 || lon >= g.lon1) {
-      toast("Rainfall data covers southern Canada, up to 60°N");
-      return;
-    }
-    const request = ++this.request, started = performance.now();
-    const cells = this.cellsFor(lat, lon);
-    const ids = [...new Set(cells.map((c) => c.tile))];
-    let tiles;
-    try {
-      tiles = Object.fromEntries(await Promise.all(ids.map(async (t) => [t, await this.tile(t)])));
-    } catch {
-      toast("Couldn't load rainfall for this area");
-      return;
-    }
-    if (request !== this.request) return;              // a newer selection replaced this one
-    this.area = { lat, lon, cells, tiles };
-    this.loadMs = Math.round(performance.now() - started);
-    settings.seasonArea = { lat, lon, size: this.size, city: this.followed };
-    saveSettings();
-    this.draw();
-    this.fit();
-  },
-
-  /** Frame the area between the map controls and the bottom card. */
-  fit() {
-    if (!this.area) return;
-    const b = L.latLngBounds(this.area.cells.flatMap((c) => c.bounds));
-    this.map.fitBounds(b, { paddingTopLeft: [14, 200], paddingBottomRight: [14, 245], maxZoom: 10, animate: false });
-  },
-
-  /** Season total (mm) of one cell. */
-  total(cell, year) { return this.area.tiles[cell.tile][year][cell.slot] / 10; },
-
-  years() { return [...this.meta.years, this.meta.current.year]; },
-
-  draw() {
-    if (!this.area) return;
-    this.layer.clearLayers(); this.labels.clearLayers();
-    const { cells } = this.area, year = +this.year;
-    const css = getComputedStyle(document.documentElement), col = (n) => css.getPropertyValue(n).trim();
-    const others = this.years().filter((y) => y !== year);
-    const normal = (c) => mean(others.map((y) => this.total(c, y)));
-
-    // One colour scale across all years, so seasons can be compared by eye
-    const all = cells.flatMap((c) => this.years().map((y) => this.total(c, y)));
-    const lo = Math.floor(Math.min(...all) / 10) * 10, hi = Math.max(Math.ceil(Math.max(...all) / 10) * 10, lo + 10);
-
-    for (const c of cells) {
-      const v = this.total(c, year), pct = (100 * v) / (normal(c) || 1);
-      const fill = this.show === "mm"
-        ? { fillColor: col("--c-precip"), fillOpacity: 0.08 + (0.75 * (v - lo)) / (hi - lo) }
-        : { fillColor: col(pct < 100 ? "--c-temp" : "--c-precip"), fillOpacity: Math.min(Math.abs(pct - 100) / 50, 1) * 0.75 };
-      const rect = L.rectangle(c.bounds, { ...fill, color: col("--text"), weight: 0.3, opacity: 0.4, interactive: false });
-      this.layer.addLayer(rect);
-      this.labels.addLayer(L.marker(rect.getBounds().getCenter(), {
-        interactive: false,
-        icon: L.divIcon({ className: "cell-label", html: this.show === "mm" ? `${Math.round(v)}` : `${Math.round(pct)}%`, iconSize: [40, 14] }),
-      }));
-    }
-    this.layer.addLayer(L.rectangle(L.latLngBounds(cells.flatMap((c) => c.bounds)), {
-      fill: false, color: col("--text"), weight: 1.2, dashArray: "4 3", interactive: false,
-    }));
-
-    this.onZoom();
-    $("#legend").className = "legend season";
-    $("#legend").innerHTML = this.show === "mm"
-      ? `<span>${lo}</span><div class="ramp" style="background:linear-gradient(to right, transparent, var(--c-precip))"></div><span>${hi} mm</span>`
-      : `<span>50%</span><div class="ramp" style="background:linear-gradient(to right, var(--c-temp), transparent, var(--c-precip))"></div><span>150%</span>`;
-    this.renderCard(others);
-  },
-
-  /** Cell labels only once the cells are big enough to hold them. */
-  onZoom() {
-    if (!this.area) return;
-    const [[s, w], [, e]] = this.area.cells[0].bounds;
-    const px = this.map.latLngToContainerPoint([s, e]).x - this.map.latLngToContainerPoint([s, w]).x;
-    px >= 22 ? this.labels.addTo(this.map) : this.labels.remove();
-  },
-
-  renderCard(others) {
-    const { cells, lat, lon } = this.area, year = +this.year, s = this.meta.season;
-    const areaTotal = (y) => mean(cells.map((c) => this.total(c, y)));
-    const fmtDay = (md) => new Date(`2000-${md}T12:00`).toLocaleDateString([], { month: "short", day: "numeric" });
-    const total = areaTotal(year), normal = mean(others.map(areaTotal));
-    const partial = year === this.meta.current.year && this.meta.current.days < s.days;
-
-    $("#seasonTitle").textContent = `${year} season · ${fmtDay(s.start)} – ${fmtDay(s.end)}`;
-    $("#seasonValue").textContent = `${Math.round(total)} mm`;
-    $("#seasonInfo").textContent = [
-      `${this.size} km area near ${nearestCity(lat, lon)[0]}`,
-      normal ? `${Math.round((100 * total) / normal)}% of average` : "",
-      partial ? `${this.meta.current.days} days so far` : "",
-    ].filter(Boolean).join(" · ");
-    const area = this.area;
-    requestAnimationFrame(() => area === this.area && this.drawChart(others, areaTotal)); // skip if replaced
-  },
-
-  /** Daily rainfall for a season: timing from the surrounding tiles, scaled to the area's total. */
-  dailyFor(year, areaTotal) {
-    const { cells, tiles } = this.area, { grid, season: s } = this.meta;
-    const regional = Array.from({ length: s.days }, (_, d) => {
-      const vals = cells.map((c) => tiles[c.tile][year][grid.tile ** 2 + d]);
-      return vals.includes(65535) ? null : mean(vals) / 100;
-    });
-    const sum = regional.reduce((a, v) => a + (v || 0), 0);
-    return regional.map((v) => (v == null ? null : (v * areaTotal(year)) / (sum || 1)));
-  },
-
-  /** Cumulative rainfall through the season: this season (solid) vs the average (dashed). */
-  drawChart(others, areaTotal) {
-    const { season: s } = this.meta;
-    const start = Date.parse(`${this.year}-${s.start}T00:00`), end = Date.parse(`${this.year}-${s.end}T24:00`);
-    const cumulative = (vals) => { let sum = 0; return vals.map((v, i) => [start + (i + 1) * DAY, (sum += v || 0)]); };
-    const daily = this.dailyFor(+this.year, areaTotal);
-    const past = others.map((y) => this.dailyFor(y, areaTotal));
-    const average = daily.map((_, d) => mean(past.map((p) => p[d] || 0)));
-    const days = daily.findLastIndex((v) => v != null) + 1;
-    Charts.draw($("#seasonChart"), {
-      from: start, to: end, now: Math.min(end, start + days * DAY), cursor: null,
-      obs: cumulative(daily.slice(0, days)), fc: [], alt: { obs: cumulative(average), fc: [] },
-      min: 0, fmt: (v) => `${Math.round(v)}`, maxGap: 3 * DAY,
-    });
-  },
-};
-
-const mean = (a) => a.reduce((s, v) => s + v, 0) / (a.length || 1);
-
-/* ============================================================
  * Theme
  * ============================================================ */
 function currentTheme() {
@@ -1409,16 +1157,13 @@ function init() {
 
   // Radar controls
   $$("#mapMode button").forEach((b) => b.addEventListener("click", () => radar.setMode(b.dataset.mode)));
-  $("#seasonYear").addEventListener("change", (e) => season.setYear(e.target.value));
-  $$("#seasonShow button").forEach((b) => b.addEventListener("click", () => season.setShow(b.dataset.show)));
-  $$("#seasonSize button").forEach((b) => b.addEventListener("click", () => season.setSize(+b.dataset.size)));
   $$("#radarType button").forEach((b) => b.addEventListener("click", () => radar.setType(b.dataset.type)));
   $("#labelsBtn").addEventListener("click", () => {
     settings.showLabels = !settings.showLabels;
     saveSettings();
     radar.setLabels(settings.showLabels);
   });
-  $("#locateBtn").addEventListener("click", () => (radar.mode === "season" ? season.useLocation() : radar.centre()));
+  $("#locateBtn").addEventListener("click", () => radar.centre());
   $("#playBtn").addEventListener("click", () => (radar.timer ? radar.stop() : radar.play()));
   $("#frameSlider").addEventListener("input", (e) => { radar.stop(); radar.show(+e.target.value); });
 
