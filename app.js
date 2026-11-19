@@ -1081,7 +1081,7 @@ const season = {
   fit() {
     if (!this.area) return;
     const b = L.latLngBounds(this.area.cells.flatMap((c) => c.bounds));
-    this.map.fitBounds(b, { paddingTopLeft: [14, 165], paddingBottomRight: [14, 245], maxZoom: 10, animate: false });
+    this.map.fitBounds(b, { paddingTopLeft: [14, 200], paddingBottomRight: [14, 245], maxZoom: 10, animate: false });
   },
 
   /** Season total (mm) of one cell. */
