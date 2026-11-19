@@ -594,7 +594,7 @@ function renderTiles() {
 
   const tiles = [
     ["temp", "Feels like", deg(feels), ""],
-    ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
+    ["temp", "Hi / Lo", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
     ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? chance[3].replace(/^./, (m) => m.toUpperCase()) : "Next hour"],
     ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
     ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : ""],
@@ -623,8 +623,6 @@ function render() {
   const label = { home: "Home", current: "Near you" }[state.loc];
   $("#locTitle").textContent = wx.name;
   $("#locDesc").textContent = [label, wx.region || state.city[1]].filter(Boolean).join(" · ");
-  $("#updated").textContent = `Environment Canada${c.station ? ` · observed at ${c.station}` : ""}` +
-    `${state.modelStation ? ` · model (${state.modelStation}) matched to official highs/lows after 24 h` : ""} · updated ${fmtTime(new Date(wx.updated))}`;
 
   $("#alerts").innerHTML = wx.warnings.map((w) =>
     `<a class="alert ${w.type}" href="${w.url}" target="_blank" rel="noopener"><b>${w.type?.toUpperCase()}</b>${w.title}</a>`
@@ -634,7 +632,6 @@ function render() {
   $("#nowIcon").innerHTML = icon(c.icon);
   $("#nowTemp").textContent = temp(c.temp ?? wx.hourly[0]?.temp);
   $("#nowCond").textContent = c.cond;
-  $("#nowFeels").textContent = c.station ? `Observed at ${c.station}` : "";
   renderTiles();
 
   // Today: the official text forecast for the next two periods
@@ -1256,7 +1253,6 @@ function showView(view) {
   $$(".tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   $("#settingsBtn").classList.toggle("active", view === "settings");
   const chartView = view in WINDOWS;
-  $("#updated").hidden = !(chartView || view === "now");
   document.body.classList.toggle("map-open", view === "radar");
   closeLocations();
   state.cursor = null;
