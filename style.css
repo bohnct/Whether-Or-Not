@@ -120,7 +120,11 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 
 /* Now page: one small square per value */
 .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.tile { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-rows: 18px 32px 16px; align-content: center; justify-items: center; align-items: center; gap: 4px; text-align: center; border-color: var(--c); }
+.tile { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-rows: 18px 3px 32px 16px; align-content: center; justify-items: center; align-items: center; gap: 3px; text-align: center; }
+.tile::before { content: ""; grid-row: 2; width: 22px; height: 2px; background: var(--c); }
+.tile-label { grid-row: 1; }
+.tile-value { grid-row: 3; }
+.tile-note { grid-row: 4; }
 .tile[data-kind="temp"] { --c: var(--c-temp); }
 .tile[data-kind="precip"] { --c: var(--c-precip); }
 .tile[data-kind="wind"] { --c: var(--c-wind); }
