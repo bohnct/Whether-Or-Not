@@ -1147,7 +1147,8 @@ const season = {
       normal ? `${Math.round((100 * total) / normal)}% of average` : "",
       partial ? `${this.meta.current.days} days so far` : "",
     ].filter(Boolean).join(" · ");
-    requestAnimationFrame(() => this.drawChart(others, areaTotal));
+    const area = this.area;
+    requestAnimationFrame(() => area === this.area && this.drawChart(others, areaTotal)); // skip if replaced
   },
 
   /** Daily rainfall for a season: timing from the surrounding tiles, scaled to the area's total. */
