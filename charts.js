@@ -46,6 +46,14 @@ const Charts = (() => {
   /** Time-axis labels suited to the window length. */
   function ticks(from, to) {
     const span = to - from, out = [];
+    if (span > 20 * DAY) { // months, labelled mid-month
+      const d = new Date(from); d.setDate(1); d.setHours(0, 0, 0, 0);
+      for (; +d <= to; d.setMonth(d.getMonth() + 1)) {
+        const next = new Date(d); next.setMonth(d.getMonth() + 1);
+        out.push({ t: +d, major: true, label: d.toLocaleDateString([], { month: "short" }), at: (Math.max(+d, from) + Math.min(+next, to)) / 2 });
+      }
+      return out;
+    }
     const step = span <= 14 * HOUR ? 2 * HOUR : span <= 50 * HOUR ? 6 * HOUR : DAY;
     const start = new Date(from); start.setMinutes(0, 0, 0);
     if (step === DAY) start.setHours(0);
@@ -72,7 +80,7 @@ const Charts = (() => {
    *         alt: { obs, fc }  (second, dashed line — e.g. wind gusts),
    *         marks: [{ t0, t1, v, hi }]  (official high / low, drawn over the period it applies to),
    *         precip: { obs: [[t0,t1,mm]], chance: [[t0,t1,pct,kind]], amounts: [[t0,t1,label]] },
-   *         min, max, fmt: (v)=>string }
+   *         min, max, fmt: (v)=>string, maxGap: ms (longest step still joined by a line) }
    */
   function draw(canvas, o) {
     const dpr = window.devicePixelRatio || 1;
@@ -143,7 +151,7 @@ const Charts = (() => {
     const path = (pts) => {
       ctx.beginPath();
       pts.forEach(([t, v], i) => {
-        const gap = i && t - pts[i - 1][0] > 7 * HOUR;
+        const gap = i && t - pts[i - 1][0] > (o.maxGap ?? 7 * HOUR);
         i && !gap ? ctx.lineTo(x(t), y(v)) : ctx.moveTo(x(t), y(v));
       });
     };

@@ -21,7 +21,7 @@ const DEFAULTS = {
   startLoc: "current",  // current | home
   home: null,           // [name, province, lat, lon]
   radarType: "auto",    // auto | rain | snow
-  mapMode: "radar",     // radar | pressure
+  mapMode: "radar",     // radar | pressure | season
   radarOpacity: 0.8,
   radarSpeed: 500,
   showLabels: true,
@@ -713,6 +713,7 @@ const radar = {
     if (!state.city) { this.map.setView([56, -96], 4); return; }
     const ll = state.loc === "current" && state.lastPos ? state.lastPos : [state.city[2], state.city[3]];
     this.marker.setLatLng(ll);
+    if (!initial && this.mode === "season") return; // the season map stays on its own area
     // Animating a hidden (zero-size) map produces NaN coordinates, so jump instead
     if (initial || state.view !== "radar") this.map.setView(ll, initial ? 7 : this.map.getZoom());
     else this.map.flyTo(ll, Math.max(this.map.getZoom(), 7), { duration: 0.8 });
@@ -738,9 +739,19 @@ const radar = {
     saveSettings();
     $$("#mapMode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
     $("#radarType").hidden = mode !== "radar";
-    if (mode === "radar") { this.coverage.addTo(this.map); this.centres.remove(); }
-    else { this.coverage.remove(); this.centres.addTo(this.map); }
-    this.setType(this.type);
+    $("#seasonBar").hidden = $("#seasonCard").hidden = mode !== "season";
+    $(".player").hidden = mode === "season";
+    mode === "radar" ? this.coverage.addTo(this.map) : this.coverage.remove();
+    mode === "pressure" ? this.centres.addTo(this.map) : this.centres.remove();
+    if (mode === "season") {
+      this.stop();
+      this.frames.forEach((f) => f.remove());
+      this.frames = []; this.times = [];
+      season.enter(this.map);
+    } else {
+      season.leave();
+      this.setType(this.type);
+    }
   },
 
   async setType(type) {
@@ -751,8 +762,9 @@ const radar = {
   },
 
   renderLegend() {
+    if (this.mode === "season") return; // drawn by season.renderLegend()
     const legend = $("#legend");
-    legend.classList.toggle("pressure", this.mode === "pressure");
+    legend.className = this.mode === "pressure" ? "legend pressure" : "legend";
     if (this.mode === "pressure") {
       legend.innerHTML = `
         <div><b class="hi">H</b>High</div>
@@ -872,6 +884,196 @@ const radar = {
     clearInterval(this.refreshTimer);
   },
 };
+
+/* ============================================================
+ * Season map: growing-season rainfall and hail reports around Rhein, SK
+ * Data: data/season.json, rebuilt nightly by scripts/season.py (GitHub Actions)
+ * ============================================================ */
+const season = {
+  data: null, year: null, show: "mm", cell: null,
+  layer: L.layerGroup(), labels: L.layerGroup(), hail: L.layerGroup(),
+
+  async enter(map) {
+    this.map = map;
+    $("#seasonInfo").textContent = "Loading season data…";
+    try {
+      this.data ??= await (await fetch("data/season.json")).json();
+    } catch {
+      $("#seasonInfo").textContent = "Season data unavailable offline";
+      return;
+    }
+    const { area } = this.data;
+    this.cellsPerSide = area.size;
+    this.dLat = (area.lat1 - area.lat0) / area.size;
+    this.dLon = (area.lon1 - area.lon0) / area.size;
+
+    // Years with rainfall (2013+) and/or hail reports (2005-2022), newest first
+    const years = new Set([...Object.keys(this.data.years), ...this.data.hail.map((h) => h[0].slice(0, 4))]);
+    const list = [...years].sort().reverse();
+    this.year ??= list.find((y) => this.data.years[y]) || list[0];
+    $("#seasonYear").innerHTML = list.map((y) => `<option${y === this.year ? " selected" : ""}>${y}</option>`).join("");
+
+    this.layer.addTo(map); this.hail.addTo(map);
+    map.on("zoomend", this.onZoom, this);
+    this.fit();
+    this.draw();
+  },
+
+  /** Frame the tracked area between the map controls and the bottom card. */
+  fit() {
+    const { area } = this.data;
+    this.map.fitBounds([[area.lat0, area.lon0], [area.lat1, area.lon1]], { paddingTopLeft: [10, 120], paddingBottomRight: [10, 240], animate: false });
+  },
+
+  leave() {
+    this.map?.off("zoomend", this.onZoom, this);
+    this.layer.remove(); this.labels.remove(); this.hail.remove();
+  },
+
+  setYear(y) { this.year = y; this.cell = null; this.draw(); },
+  setShow(s) { this.show = s; this.draw(); },
+
+  /** Average total per cell over every other complete season. */
+  average() {
+    const others = Object.entries(this.data.years).filter(([y, v]) => y !== this.year && v.complete);
+    const n = this.cellsPerSide ** 2;
+    return {
+      years: others.map(([y]) => +y),
+      cells: Array.from({ length: n }, (_, k) => others.reduce((s, [, v]) => s + v.total[k], 0) / (others.length || 1)),
+      area: others.reduce((s, [, v]) => s + mean(v.total), 0) / (others.length || 1),
+    };
+  },
+
+  cellBounds(k) {
+    const { area } = this.data, r = Math.floor(k / this.cellsPerSide), c = k % this.cellsPerSide;
+    const north = area.lat1 - r * this.dLat, west = area.lon0 + c * this.dLon;
+    return [[north - this.dLat, west], [north, west + this.dLon]];
+  },
+
+  draw() {
+    this.layer.clearLayers(); this.labels.clearLayers(); this.hail.clearLayers();
+    $$("#seasonShow button").forEach((b) => b.classList.toggle("on", b.dataset.show === this.show));
+    const css = getComputedStyle(document.documentElement);
+    const col = (n) => css.getPropertyValue(n).trim();
+    const yr = this.data.years[this.year];
+    const avg = this.average();
+
+    // Fixed scale across years so seasons can be compared by eye
+    const totals = Object.values(this.data.years).flatMap((v) => v.total);
+    const scaleMin = Math.floor(Math.min(...totals) / 50) * 50, scaleMax = Math.ceil(Math.max(...totals) / 50) * 50;
+    const style = (v, a) => {
+      if (this.show === "mm") return { fillColor: col("--c-precip"), fillOpacity: 0.05 + 0.8 * (v - scaleMin) / (scaleMax - scaleMin) };
+      const pct = (100 * v) / (a || 1);                 // drier → orange, wetter → blue
+      return { fillColor: col(pct < 100 ? "--c-temp" : "--c-precip"), fillOpacity: Math.min(Math.abs(pct - 100) / 50, 1) * 0.7 };
+    };
+
+    if (yr) {
+      yr.total.forEach((v, k) => {
+        const rect = L.rectangle(this.cellBounds(k), {
+          ...style(v, avg.cells[k]), color: col("--text"), weight: k === this.cell ? 2 : 0.3, opacity: k === this.cell ? 1 : 0.4,
+        }).on("click", () => { this.cell = this.cell === k ? null : k; this.draw(); });
+        this.layer.addLayer(rect);
+        const text = this.show === "mm" ? Math.round(v) : `${Math.round((100 * v) / (avg.cells[k] || 1))}%`;
+        this.labels.addLayer(L.marker(rect.getCenter(), {
+          interactive: false, icon: L.divIcon({ className: "cell-label", html: text, iconSize: [40, 14] }),
+        }));
+      });
+    }
+    // Outline of the tracked area, with Rhein marked
+    const { area } = this.data;
+    this.layer.addLayer(L.rectangle([[area.lat0, area.lon0], [area.lat1, area.lon1]], {
+      fill: false, color: col("--text"), weight: 1.2, dashArray: "4 3", interactive: false,
+    }));
+    this.layer.addLayer(L.circleMarker(area.centre, { radius: 3, color: col("--text"), fillColor: col("--bg"), fillOpacity: 1, weight: 2, interactive: false }));
+
+    // Hail reports for the selected year, sized by stone diameter
+    const hail = this.data.hail.filter((h) => h[0].startsWith(this.year));
+    for (const [when, lat, lon, mm, object] of hail) {
+      const d = new Date(when);
+      this.hail.addLayer(L.circleMarker([lat, lon], {
+        radius: 3 + mm / 10, color: col("--text"), weight: 1.5, fillColor: col("--c-snow"), fillOpacity: 0.9,
+      }).bindPopup(`<b>Hail · ${object} (${mm} mm)</b><br>${d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`));
+    }
+
+    this.onZoom();
+    this.renderLegend(scaleMin, scaleMax);
+    this.renderCard(yr, avg, hail.length);
+  },
+
+  /** Cell labels only once the cells are big enough to hold them. */
+  onZoom() {
+    if (!this.data || !this.map) return;
+    const px = this.map.latLngToContainerPoint([0, this.dLon]).x - this.map.latLngToContainerPoint([0, 0]).x;
+    px >= 22 ? this.labels.addTo(this.map) : this.labels.remove();
+  },
+
+  renderLegend(scaleMin, scaleMax) {
+    const legend = $("#legend");
+    legend.className = "legend season";
+    legend.innerHTML = this.show === "mm"
+      ? `<span>${scaleMin}</span><div class="ramp" style="background:linear-gradient(to right, transparent, var(--c-precip))"></div><span>${scaleMax} mm</span>`
+      : `<span>50%</span><div class="ramp" style="background:linear-gradient(to right, var(--c-temp), transparent, var(--c-precip))"></div><span>150%</span>`;
+  },
+
+  renderCard(yr, avg, hailCount) {
+    const { season: s } = this.data;
+    const fmtDay = (md) => new Date(`2000-${md}T12:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+    $("#seasonTitle").textContent = `${this.year} season · ${fmtDay(s.start)} – ${fmtDay(s.end)}`;
+    const hailNote = +this.year > 2022 ? "hail reports end in 2022" : `${hailCount} hail report${hailCount === 1 ? "" : "s"}`;
+
+    if (!yr) {
+      $("#seasonValue").textContent = "";
+      $("#seasonInfo").textContent = `No rainfall analysis before 2013 · ${hailNote}`;
+      $("#seasonChart").hidden = true;
+      return;
+    }
+    const k = this.cell;
+    const total = k == null ? mean(yr.total) : yr.total[k];
+    const normal = k == null ? avg.area : avg.cells[k];
+    const where = k == null ? "Area average" : this.describeCell(k);
+    const range = avg.years.length ? `${Math.min(...avg.years)}–${Math.max(...avg.years)}` : "";
+    $("#seasonValue").textContent = `${Math.round(total)} mm`;
+    $("#seasonInfo").textContent = [
+      where,
+      normal ? `${Math.round((100 * total) / normal)}% of ${range} avg` : "",
+      yr.complete ? "" : `${yr.days} days so far`,
+      hailNote,
+    ].filter(Boolean).join(" · ");
+    $("#seasonChart").hidden = false;
+    requestAnimationFrame(() => this.drawChart(yr, k));
+  },
+
+  /** Cumulative rainfall through the season: this season (solid) vs the average (dashed). */
+  drawChart(yr, k) {
+    const start = Date.parse(`${this.year}-${this.data.season.start}T00:00`);
+    const end = Date.parse(`${this.year}-${this.data.season.end}T24:00`);
+    // Day-by-day values for a tapped cell exist for the latest season; otherwise the area mean
+    const daily = k != null && yr.cells ? yr.cells.map((c) => (c ? c[k] : null)) : yr.dailyMean;
+    const cumulative = (vals) => { let s = 0; return vals.map((v, i) => [start + (i + 1) * DAY, (s += v || 0)]); };
+
+    const others = Object.entries(this.data.years).filter(([y, v]) => y !== this.year && v.complete);
+    const avgDaily = (others[0]?.[1].dailyMean || []).map((_, i) => others.reduce((s, [, v]) => s + (v.dailyMean[i] || 0), 0) / others.length);
+    const days = daily.findLastIndex((v) => v != null) + 1;
+
+    Charts.draw($("#seasonChart"), {
+      from: start, to: end, now: Math.min(end, start + days * DAY), cursor: null,
+      obs: cumulative(daily.slice(0, days)), fc: [],
+      alt: { obs: cumulative(avgDaily), fc: [] },
+      min: 0, fmt: (v) => `${Math.round(v)}`, maxGap: 3 * DAY,
+    });
+  },
+
+  describeCell(k) {
+    const [[s, w], [n, e]] = this.cellBounds(k), [lat, lon] = this.data.area.centre;
+    const cLat = (s + n) / 2, cLon = (w + e) / 2;
+    const km = Math.round(distanceKm(lat, lon, cLat, cLon));
+    if (km < 4) return "At Rhein";
+    const bearing = (Math.atan2((cLon - lon) * Math.cos((lat * Math.PI) / 180), cLat - lat) * 180) / Math.PI;
+    return `${km} km ${["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(((bearing + 360) % 360) / 45) % 8]} of Rhein`;
+  },
+};
+
+const mean = (a) => a.reduce((s, v) => s + v, 0) / (a.length || 1);
 
 /* ============================================================
  * Theme
@@ -1010,13 +1212,15 @@ function init() {
 
   // Radar controls
   $$("#mapMode button").forEach((b) => b.addEventListener("click", () => radar.setMode(b.dataset.mode)));
+  $("#seasonYear").addEventListener("change", (e) => season.setYear(e.target.value));
+  $$("#seasonShow button").forEach((b) => b.addEventListener("click", () => season.setShow(b.dataset.show)));
   $$("#radarType button").forEach((b) => b.addEventListener("click", () => radar.setType(b.dataset.type)));
   $("#labelsBtn").addEventListener("click", () => {
     settings.showLabels = !settings.showLabels;
     saveSettings();
     radar.setLabels(settings.showLabels);
   });
-  $("#locateBtn").addEventListener("click", () => radar.centre());
+  $("#locateBtn").addEventListener("click", () => (radar.mode === "season" ? season.fit() : radar.centre()));
   $("#playBtn").addEventListener("click", () => (radar.timer ? radar.stop() : radar.play()));
   $("#frameSlider").addEventListener("input", (e) => { radar.stop(); radar.show(+e.target.value); });
 

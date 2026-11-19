@@ -78,6 +78,7 @@
         <div class="seg small" id="mapMode">
           <button data-mode="radar">Radar</button>
           <button data-mode="pressure">Pressure</button>
+          <button data-mode="season">Season</button>
         </div>
         <button class="chip" id="labelsBtn" aria-pressed="true">Labels</button>
         <button class="chip icon-only" id="locateBtn" aria-label="Centre on location">
@@ -88,7 +89,23 @@
         <button data-type="rain">Rain</button>
         <button data-type="snow">Snow</button>
       </div>
+      <div class="map-sub season-bar" id="seasonBar" hidden>
+        <select id="seasonYear" aria-label="Season year"></select>
+        <div class="seg small" id="seasonShow">
+          <button data-show="mm">mm</button>
+          <button data-show="pct">% of avg</button>
+        </div>
+      </div>
       <div class="legend" id="legend"></div>
+      <div class="season-card card" id="seasonCard" hidden>
+        <div class="chart-head">
+          <span class="chart-title" id="seasonTitle">Season</span>
+          <span class="chart-read"><b id="seasonValue"></b></span>
+        </div>
+        <p class="muted small" id="seasonInfo"></p>
+        <canvas id="seasonChart"></canvas>
+        <p class="muted tiny">Solid: this season · dashed: average · rainfall ECCC RDPA · hail: ECCC / Northern Hail Project (CC BY 4.0)</p>
+      </div>
       <div class="player card">
         <button id="playBtn" class="icon-btn" aria-label="Play / pause">
           <svg class="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" class="fill"/></svg>
