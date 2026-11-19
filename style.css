@@ -39,6 +39,14 @@
 /* ---------- Base ---------- */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; }
+/* iOS home-screen apps measure the page short by the status bar when it doesn't scroll,
+   which lifts the bottom bar; these keep the page and the bar on the real screen edge */
+html { min-height: calc(100% + env(safe-area-inset-top)); background: var(--bg); }
+body.map-open { overflow: hidden; }
+@media (display-mode: standalone) {
+  .tabbar { top: calc(100lvh - var(--tab-h)); bottom: auto !important; }
+  .view-map { height: calc(100lvh - var(--tab-h)); bottom: auto !important; }
+}
 body {
   font-family: var(--font);
   background: var(--bg);
@@ -77,14 +85,15 @@ svg .fill { fill: currentColor; stroke: none; }
 
 /* Place name: tap to change location */
 .place-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; text-align: left; }
-.place-text { min-width: 0; display: flex; flex-direction: column; }
-.place-text b, .place-text small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.place-text b { font-size: 1.3rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
-.place-text small { font-size: .72rem; color: var(--muted); }
+.place-name { min-width: 0; font-size: 1.35rem; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .place-btn svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
 
 .loc-sheet { position: fixed; inset: var(--top-h) 0 var(--tab-h); z-index: 1100; background: rgba(0, 0, 0, .55); }
 .loc-panel { background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px 14px; max-height: 100%; overflow-y: auto; }
+.loc-now { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.loc-now:has(b:empty) { display: none; }
+.loc-now b { font-weight: 600; }
+.loc-now span { font-size: .8rem; color: var(--muted); line-height: 1.35; }
 .loc-panel input { width: 100%; font-size: 1rem; padding: 10px 12px; }
 #locList { list-style: none; margin: 8px 0 0; padding: 0; }
 #locList button { width: 100%; display: flex; justify-content: space-between; gap: 12px; padding: 12px 4px; text-align: left; border-bottom: 1px solid var(--line); }
@@ -113,18 +122,19 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 .now-text p { margin: 2px 0; }
 
 /* Now page: one small square per value */
-.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.tile { aspect-ratio: 1; min-width: 0; padding: 9px; display: flex; flex-direction: column; justify-content: space-between; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 350px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.tile { aspect-ratio: 1; min-width: 0; padding: 7px 6px; display: flex; flex-direction: column; gap: 3px; }
 .tile[data-kind="temp"] { --c: var(--c-temp); }
 .tile[data-kind="precip"] { --c: var(--c-precip); }
 .tile[data-kind="wind"] { --c: var(--c-wind); }
 .tile[data-kind="hum"] { --c: var(--c-hum); }
 .tile[data-kind="pres"] { --c: var(--c-pres); }
 .tile[data-kind="sun"] { --c: #ffb000; }
-.tile-label { font-size: .62rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); white-space: nowrap; overflow: hidden; }
-.tile-label::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; background: var(--c); vertical-align: 1px; }
-.tile-value { font-size: 1.3rem; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tile-note { font-size: .66rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-label { font-size: .54rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.tile-label::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 3px; background: var(--c); vertical-align: 1px; }
+.tile-value { margin-top: auto; font-size: 1rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-note { min-height: .8rem; font-size: .6rem; line-height: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .text-forecast { padding: 12px 14px; margin-bottom: 12px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
 .text-forecast p { margin: 4px 0; }

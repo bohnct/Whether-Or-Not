@@ -17,7 +17,7 @@
 <body>
   <header class="topbar">
     <button id="placeBtn" class="place-btn" aria-label="Change location">
-      <span class="place-text"><b id="placeName">Choose a location</b><small id="placeMeta"></small></span>
+      <b id="placeName" class="place-name">Choose a location</b>
       <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
     </button>
     <div class="top-actions">
@@ -173,6 +173,7 @@
 
   <div id="locSheet" class="loc-sheet" hidden>
     <div class="loc-panel">
+      <div class="loc-now"><b id="locTitle"></b><span id="locDesc"></span></div>
       <input id="locSearch" type="search" placeholder="Search Canadian city or town…" autocomplete="off" aria-label="Search locations">
       <ul id="locList"></ul>
     </div>

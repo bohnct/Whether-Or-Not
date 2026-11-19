@@ -593,18 +593,18 @@ function renderTiles() {
   const rain = reports.reduce((sum, [a, b, mm]) => sum + (mm * Math.max(0, b - Math.max(a, now - DAY))) / (b - a), 0);
 
   const tiles = [
-    ["temp", "Feels like", deg(feels), "Apparent temp"],
+    ["temp", "Feels like", deg(feels), ""],
     ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
-    ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? `Chance of ${chance[3]}` : "Chance next hour"],
+    ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? chance[3].replace(/^./, (m) => m.toUpperCase()) : "Next hour"],
     ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
-    ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : "Steady wind"],
-    ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm measured"],
-    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, "Relative"],
-    ["hum", "Dew point", deg(c.dewpoint), "Air moisture"],
+    ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : ""],
+    ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm"],
+    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, ""],
+    ["hum", "Dew point", deg(c.dewpoint), ""],
     ["pres", "Pressure", c.pressure == null ? "--" : c.pressure.toFixed(1), ["kPa", c.tendency].filter(Boolean).join(" · ")],
     ["sun", "UV index", uv ? `${uv.uv}` : "--", (uv?.uvCategory || uv?.label || "").replace(/^./, (m) => m.toUpperCase())],
-    ["sun", "Sunrise", time(wx.sunrise), "Today"],
-    ["sun", "Sunset", time(wx.sunset), "Today"],
+    ["sun", "Sunrise", time(wx.sunrise), ""],
+    ["sun", "Sunset", time(wx.sunset), ""],
   ];
   $("#nowTiles").innerHTML = tiles.map(([kind, label, value, note]) => `
     <div class="tile card" data-kind="${kind}">
@@ -621,7 +621,8 @@ function render() {
 
   $("#placeName").textContent = wx.name;
   const label = { home: "Home", current: "Near you" }[state.loc];
-  $("#placeMeta").textContent = [label, wx.region || state.city[1]].filter(Boolean).join(" · ");
+  $("#locTitle").textContent = wx.name;
+  $("#locDesc").textContent = [label, wx.region || state.city[1]].filter(Boolean).join(" · ");
   $("#updated").textContent = `Environment Canada${c.station ? ` · observed at ${c.station}` : ""}` +
     `${state.modelStation ? ` · model (${state.modelStation}) matched to official highs/lows after 24 h` : ""} · updated ${fmtTime(new Date(wx.updated))}`;
 
@@ -1256,6 +1257,7 @@ function showView(view) {
   $("#settingsBtn").classList.toggle("active", view === "settings");
   const chartView = view in WINDOWS;
   $("#updated").hidden = !(chartView || view === "now");
+  document.body.classList.toggle("map-open", view === "radar");
   closeLocations();
   state.cursor = null;
   if (view === "radar") radar.onShow();
