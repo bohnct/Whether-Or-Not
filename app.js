@@ -651,28 +651,33 @@ function renderTiles() {
   const high = wx.periods.find((p) => !p.night), low = wx.periods.find((p) => p.night);
   const uv = wx.periods.find((p) => p.uv != null);
   const chance = s?.precip.chance?.find((b) => b[1] > now);
-  // Rain measured over the last 24 hours (a report covering part of that window counts in part)
-  const reports = s?.precip.obs || [];
-  const rain = reports.reduce((sum, [a, b, mm]) => sum + (mm * Math.max(0, b - Math.max(a, now - DAY))) / (b - a), 0);
+  // Rain (mm) and snow (cm) expected over the next 24 hours
+  const expected = s?.precip.expected?.length ? Charts.expectedAt(s.precip.expected, now + DAY) : null;
+  const rainSnow = expected
+    ? `${Charts.amount(expected[0])}<small>mm</small> ${Charts.amount(expected[1])}<small>cm</small>` : "--";
 
+  // One row per kind of data
   const tiles = [
     ["temp", "Feels like", deg(feels), ""],
     ["temp", "High / Low", `${deg(high?.temp)} / ${deg(low?.temp)}`, high?.label || ""],
+    ["hum", "Dew point", deg(c.dewpoint), ""],
+
     ["precip", "Precip", chance ? `${chance[2]}%` : "--", chance?.[2] ? chance[3].replace(/^./, (m) => m.toUpperCase()) : "Next hour"],
+    ["precip", "Rain / Snow", rainSnow, "Next 24 h", "pair"],
+    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, ""],
+
     ["wind", "Wind", c.wind == null ? "--" : `${wind(c.wind)}`, [c.dir, windUnit()].filter(Boolean).join(" · ")],
     ["wind", "Gusts", c.gust ? `${wind(c.gust)}` : "None", c.gust ? windUnit() : ""],
-    ["precip", "Rain 24 h", reports.length ? `${rain.toFixed(1)}` : "--", "mm"],
-    ["hum", "Humidity", c.humidity == null ? "--" : `${Math.round(c.humidity)}%`, ""],
-    ["hum", "Dew point", deg(c.dewpoint), ""],
     ["pres", "Pressure", c.pressure == null ? "--" : c.pressure.toFixed(1), ["kPa", c.tendency].filter(Boolean).join(" · ")],
+
     ["sun", "UV index", uv ? `${uv.uv}` : "--", (uv?.uvCategory || uv?.label || "").replace(/^./, (m) => m.toUpperCase())],
     ["sun", "Sunrise", time(wx.sunrise), ""],
     ["sun", "Sunset", time(wx.sunset), ""],
   ];
-  $("#nowTiles").innerHTML = tiles.map(([kind, label, value, note]) => `
+  $("#nowTiles").innerHTML = tiles.map(([kind, label, value, note, style = ""]) => `
     <div class="tile card" data-kind="${kind}">
       <span class="tile-label">${label}</span>
-      <b class="tile-value">${value}</b>
+      <b class="tile-value ${style}">${value}</b>
       <span class="tile-note">${note}</span>
     </div>`).join("");
 }
@@ -749,6 +754,7 @@ async function load() {
       if (state.city !== city) return;
       state.series.precip.expected = list;
       save();
+      renderTiles();
       drawCharts();
     }).catch(() => {});
     if (radar.map) radar.centre();

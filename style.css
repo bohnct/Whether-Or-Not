@@ -133,6 +133,8 @@ main { padding: calc(var(--top-h) + 12px) 16px calc(var(--tab-h) + 16px); max-wi
 .tile[data-kind="sun"] { --c: #ffb000; }
 .tile-label { max-width: 100%; line-height: 18px; font-size: .84rem; font-weight: 600; letter-spacing: -.01em; color: var(--text); white-space: nowrap; overflow: hidden; }
 .tile-value { line-height: 32px; font-size: 1.5rem; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-value.pair { font-size: 1.05rem; letter-spacing: -.02em; }
+.tile-value.pair small { margin-left: 1px; font-size: .68rem; font-weight: 500; color: var(--muted); }
 .tile-note { max-width: 100%; font-size: .72rem; line-height: 16px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .text-forecast { padding: 12px 14px; margin-top: 8px; font-size: .86rem; line-height: 1.45; color: var(--muted); }
