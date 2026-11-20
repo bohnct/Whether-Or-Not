@@ -20,6 +20,7 @@ const DEFAULTS = {
   windUnit: "kmh",      // kmh | mph
   startLoc: "current",  // current | home
   home: null,           // [name, province, lat, lon]
+  saved: [],            // more [name, province, lat, lon] places
   radarType: "auto",    // auto | rain | snow
   mapMode: "radar",     // radar | pressure
   radarOpacity: 0.8,
@@ -291,7 +292,10 @@ function normalize(p) {
         gust: Math.max(0, ...(f.winds?.periods || []).map((w) => num(w.gust?.value) || 0)) || null,
       };
     }),
-    warnings: (p.warnings || []).map((w) => ({ type: en(w.type), title: en(w.description), url: en(w.url) })),
+    warnings: (p.warnings || []).filter((w) => en(w.type) !== "ended").map((w) => ({
+      type: en(w.type), level: en(w.alertColourLevel), title: en(w.description), url: en(w.url),
+      expires: Date.parse(en(w.expiryTime)) || null,
+    })),
     sunrise: p.riseSet?.sunrise ? Date.parse(en(p.riseSet.sunrise)) : null,
     sunset: p.riseSet?.sunset ? Date.parse(en(p.riseSet.sunset)) : null,
   };
@@ -640,6 +644,29 @@ function renderSky() {
     p.night ? "Tonight" : new Date(p.span[0]).toLocaleDateString([], { weekday: "short" }), p.icon, p.temp)).join("");
 }
 
+/**
+ * Alerts across the top of every page, coloured by EC's level: red, orange or yellow;
+ * special weather statements in blue. Tapping one opens EC's full alert.
+ */
+function renderAlerts() {
+  const now = Date.now();
+  const alerts = (state.wx?.warnings || []).filter((w) => !w.expires || w.expires > now);
+  $("#alerts").innerHTML = alerts.map((w) => {
+    // "YELLOW WARNING - WIND" → "Wind warning"
+    const m = (w.title || "").match(/^(?:yellow|orange|red)\s+(warning|watch|advisory)\s*-\s*(.+)$/i);
+    const title = (m ? `${m[2]} ${m[1]}` : w.title || "").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+    const level = w.level || { warning: "red", watch: "yellow", advisory: "yellow" }[w.type] || "blue";
+    const until = w.expires ? `until ${new Date(w.expires).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
+    return `<a class="alert ${level}" href="${w.url}" target="_blank" rel="noopener"><b>${title}</b><span>${until}</span></a>`;
+  }).join("");
+  fitTopBar();
+}
+
+/** The top bar grows with alerts; everything below is laid out from its height. */
+function fitTopBar() {
+  document.documentElement.style.setProperty("--top-h", `${$(".topbar").offsetHeight}px`);
+}
+
 /** The Now page: one small square per current value. */
 function renderTiles() {
   const wx = state.wx, c = wx.current, s = state.series, now = Date.now();
@@ -688,13 +715,11 @@ function render() {
   const c = wx.current;
 
   $("#placeName").textContent = wx.name;
-  const label = { home: "Home", current: "Near you" }[state.loc];
+  const label = { home: "Home", current: "Near you", city: "Saved" }[state.loc];
   $("#locTitle").textContent = wx.name;
   $("#locDesc").textContent = [label, wx.region || state.city[1]].filter(Boolean).join(" · ");
 
-  $("#alerts").innerHTML = wx.warnings.map((w) =>
-    `<a class="alert ${w.type}" href="${w.url}" target="_blank" rel="noopener"><b>${w.type?.toUpperCase()}</b>${w.title}</a>`
-  ).join("");
+  renderAlerts();
 
   // Now: current conditions and value tiles
   $("#nowIcon").innerHTML = icon(c.icon);
@@ -718,6 +743,8 @@ async function load() {
     if (state.loc === "home") {
       if (!settings.home) return openLocations();
       state.city = settings.home;
+    } else if (state.loc === "city") {
+      state.city = state.picked;
     } else {
       const [lat, lon] = await getPosition();
       state.lastPos = [lat, lon];
@@ -768,8 +795,9 @@ async function load() {
   }
 }
 
-function setLoc(loc) {
+function setLoc(loc, city) {
   state.loc = loc;
+  state.picked = city || state.picked;
   closeLocations();
   load();
 }
@@ -782,7 +810,9 @@ function locationRow(attrs, title, note, on) {
 function openLocations() {
   $("#locList").innerHTML =
     locationRow('data-loc="current"', "Current location", "Use this device's GPS", state.loc === "current") +
-    locationRow('data-loc="home"', "Home", settings.home ? `${settings.home[0]}, ${settings.home[1]}` : "Choose one in Settings", state.loc === "home");
+    locationRow('data-loc="home"', "Home", settings.home ? `${settings.home[0]}, ${settings.home[1]}` : "Choose one in Settings", state.loc === "home") +
+    settings.saved.map((c, i) => locationRow(`data-i="${i}"`, c[0], c[1], state.loc === "city" && state.picked?.[0] === c[0])).join("") +
+    locationRow('data-loc="manage"', "Edit saved locations", "", false);
   $("#locSheet").hidden = false;
 }
 
@@ -794,7 +824,8 @@ function bindLocations() {
     if (e.target.id === "locSheet") return closeLocations();
     const row = e.target.closest("button");
     if (!row) return;
-    if (row.dataset.loc === "home" && !settings.home) { closeLocations(); return showView("settings"); }
+    if (row.dataset.i) return setLoc("city", settings.saved[row.dataset.i]);
+    if (row.dataset.loc === "manage" || (row.dataset.loc === "home" && !settings.home)) { closeLocations(); return showView("settings"); }
     setLoc(row.dataset.loc);
   });
 }
@@ -1089,6 +1120,38 @@ function syncSettingsForm() {
   $("#setSpeed").value = settings.radarSpeed;
   $("#setLabels").checked = settings.showLabels;
   $("#homeLabel").textContent = settings.home ? `${settings.home[0]}, ${settings.home[1]}` : "Not set";
+  renderSaved();
+}
+
+/* ---------- Saved locations ---------- */
+function renderSaved() {
+  $("#savedList").innerHTML = settings.saved.map((c, i) =>
+    `<li><span>${c[0]} <small>${c[1]}</small></span><button data-i="${i}" aria-label="Remove ${c[0]}">✕</button></li>`).join("")
+    || '<li class="muted small">None yet. Add places to switch to them from the location menu.</li>';
+}
+
+function bindSaved() {
+  let results = [];
+  $("#saveSearch").addEventListener("input", (e) => {
+    results = searchCities(e.target.value);
+    $("#saveResults").innerHTML = results.map((c, i) => `<li data-i="${i}">${c[0]}<span>${c[1]}</span></li>`).join("");
+  });
+  $("#saveResults").addEventListener("click", (e) => {
+    const city = results[e.target.closest("li")?.dataset.i];
+    if (!city) return;
+    if (!settings.saved.some((c) => c[0] === city[0] && c[1] === city[1])) settings.saved.push(city);
+    saveSettings();
+    $("#saveSearch").value = ""; $("#saveResults").innerHTML = "";
+    renderSaved();
+    toast(`Saved ${city[0]}`);
+  });
+  $("#savedList").addEventListener("click", (e) => {
+    const i = e.target.closest("button")?.dataset.i;
+    if (i == null) return;
+    settings.saved.splice(+i, 1);
+    saveSettings();
+    renderSaved();
+  });
 }
 
 function setHome(city) {
@@ -1154,6 +1217,7 @@ function init() {
 
   $$(".tabbar button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   bindLocations();
+  bindSaved();
 
   // Radar controls
   $$("#mapMode button").forEach((b) => b.addEventListener("click", () => radar.setMode(b.dataset.mode)));
@@ -1167,7 +1231,7 @@ function init() {
   $("#playBtn").addEventListener("click", () => (radar.timer ? radar.stop() : radar.play()));
   $("#frameSlider").addEventListener("input", (e) => { radar.stop(); radar.show(+e.target.value); });
 
-  window.addEventListener("resize", drawCharts);
+  window.addEventListener("resize", () => { fitTopBar(); drawCharts(); });
   setInterval(drawCharts, 60e3); // keep the NOW line moving
 
   // Refresh when the app comes back to the foreground after 10+ minutes

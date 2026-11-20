@@ -16,16 +16,19 @@
 </head>
 <body>
   <header class="topbar">
-    <button id="placeBtn" class="place-btn" aria-label="Change location">
-      <b id="placeName" class="place-name">Choose a location</b>
-      <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
+    <div class="topbar-row">
+      <button id="placeBtn" class="place-btn" aria-label="Change location">
+        <b id="placeName" class="place-name">Choose a location</b>
+        <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+    <!-- Environment Canada alerts, shown on every page -->
+    <div id="alerts"></div>
   </header>
 
   <main>
     <!-- NOW: current values -->
     <section id="view-now" class="view" hidden>
-      <div id="alerts"></div>
       <div class="now-summary card">
         <div id="nowIcon"></div>
         <div class="now-temp"><span id="nowTemp">--</span><span class="deg">°</span></div>
@@ -85,6 +88,15 @@
         <div class="search">
           <input id="citySearch" type="search" placeholder="Search Canadian city…" autocomplete="off">
           <ul id="cityResults"></ul>
+        </div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Saved locations</h3>
+        <ul id="savedList"></ul>
+        <div class="search">
+          <input id="saveSearch" type="search" placeholder="Add a Canadian city…" autocomplete="off">
+          <ul id="saveResults"></ul>
         </div>
       </div>
 
