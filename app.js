@@ -674,7 +674,7 @@ async function fetchSaskAlerts(where) {
   const { entries = [] } = await getJSON(`${SASKALERT}/sapublic/feed.json`);
   const found = [];
   for (const e of entries) {
-    if (e.state !== "active" || e.level === "test" || e.code === "testmessage") continue;
+    if (e.state !== "active") continue;
     if (/environment|eccc/i.test(`${e.sender} ${e.author_en}`)) continue; // EC weather alerts: shown from EC directly
     const geocodes = (e.area || []).flatMap((a) => a.geocode || []);
     const outlines = (await Promise.all(geocodes.map((g) => areaOutlines(g).catch(() => [])))).flat();
@@ -709,9 +709,11 @@ function renderAlerts() {
     const until = w.expires ? `until ${new Date(w.expires).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
     return `<a class="alert ${level}" href="${w.url}" target="_blank" rel="noopener"><b>${title}</b><span>${until}</span></a>`;
   }).join("") + (state.skAlerts || []).map((a) => {
-    // Drinking water in water-blue; critical alerts red; other advisories orange
-    const colour = a.level === "critical" ? "red" : a.code === "drinkingwate" ? "water" : "orange";
-    const title = `${a.event} ${a.level === "critical" ? "alert" : a.level}`.toLowerCase().replace(/^./, (c) => c.toUpperCase());
+    // Drinking water in water-blue; critical alerts red; tests grey; other advisories orange
+    const test = a.level === "test" || a.code === "testmessage";
+    const colour = test ? "grey" : a.level === "critical" ? "red" : a.code === "drinkingwate" ? "water" : "orange";
+    const kind = test ? "" : a.level === "critical" ? " alert" : ` ${a.level}`;
+    const title = `${a.event}${kind}`.toLowerCase().replace(/^./, (c) => c.toUpperCase());
     return `<a class="alert ${colour}" href="${a.url}" target="_blank" rel="noopener"><b>${title}</b><span>SaskAlert</span></a>`;
   }).join("");
   fitTopBar();

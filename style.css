@@ -84,6 +84,7 @@ svg .fill { fill: currentColor; stroke: none; }
 .alert.yellow { background: #ffd60a; color: #000; }
 .alert.blue { background: #2f8fff; color: #fff; }
 .alert.water { background: #14c8d8; color: #000; }
+.alert.grey { background: #9a9a9a; color: #000; }
 .icon-btn {
   width: 38px; height: 38px; border-radius: var(--radius);
   display: grid; place-items: center;
