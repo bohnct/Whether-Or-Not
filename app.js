@@ -644,6 +644,56 @@ function renderSky() {
     p.night ? "Tonight" : new Date(p.span[0]).toLocaleDateString([], { weekday: "short" }), p.icon, p.temp)).join("");
 }
 
+/* ---------- SaskAlert: Saskatchewan's public alerts (drinking water, emergencies, …) ---------- */
+// SaskAlert's own website reads this public list; it is small and open to other web apps.
+const SASKALERT = "https://emergencyalert.saskatchewan.ca";
+
+/** Is [lat, lon] inside a polygon given as "lat,lon lat,lon …"? */
+function insidePolygon([lat, lon], text) {
+  const pts = text.trim().split(/\s+/).map((p) => p.split(",").map(Number));
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [ai, oi] = pts[i], [aj, oj] = pts[j];
+    if (ai > lat !== aj > lat && lon < ((oj - oi) * (lat - ai)) / (aj - ai) + oi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Outline of a SaskAlert area (census subdivision); boundaries don't change, so keep them. */
+async function areaOutlines(geocode) {
+  const key = `skarea:${geocode}`, saved = localStorage.getItem(key);
+  if (saved) return JSON.parse(saved);
+  const { polygon } = await getJSON(`${SASKALERT}/mobile-areas/v2/${geocode}.json`);
+  const outlines = [].concat(polygon || []);
+  localStorage.setItem(key, JSON.stringify(outlines));
+  return outlines;
+}
+
+/** Active SaskAlert alerts whose area contains this location. */
+async function fetchSaskAlerts(where) {
+  const { entries = [] } = await getJSON(`${SASKALERT}/sapublic/feed.json`);
+  const found = [];
+  for (const e of entries) {
+    if (e.state !== "active" || e.level === "test" || e.code === "testmessage") continue;
+    if (/environment|eccc/i.test(`${e.sender} ${e.author_en}`)) continue; // EC weather alerts: shown from EC directly
+    const geocodes = (e.area || []).flatMap((a) => a.geocode || []);
+    const outlines = (await Promise.all(geocodes.map((g) => areaOutlines(g).catch(() => [])))).flat();
+    if (!outlines.some((o) => insidePolygon(where, o))) continue;
+    found.push({ event: e.event_en, level: e.level, code: e.code, url: e.html_link });
+  }
+  return found;
+}
+
+function loadSaskAlerts() {
+  const city = state.city;
+  const where = state.loc === "current" && state.lastPos ? state.lastPos : [city[2], city[3]];
+  fetchSaskAlerts(where).then((list) => {
+    if (state.city !== city) return;
+    state.skAlerts = list;
+    renderAlerts();
+  }).catch(() => {});                                  // SaskAlert unreachable: show the weather alerts alone
+}
+
 /**
  * Alerts across the top of every page, coloured by EC's level: red, orange or yellow;
  * special weather statements in blue. Tapping one opens EC's full alert.
@@ -658,6 +708,11 @@ function renderAlerts() {
     const level = w.level || { warning: "red", watch: "yellow", advisory: "yellow" }[w.type] || "blue";
     const until = w.expires ? `until ${new Date(w.expires).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
     return `<a class="alert ${level}" href="${w.url}" target="_blank" rel="noopener"><b>${title}</b><span>${until}</span></a>`;
+  }).join("") + (state.skAlerts || []).map((a) => {
+    // Drinking water in water-blue; critical alerts red; other advisories orange
+    const colour = a.level === "critical" ? "red" : a.code === "drinkingwate" ? "water" : "orange";
+    const title = `${a.event} ${a.level === "critical" ? "alert" : a.level}`.toLowerCase().replace(/^./, (c) => c.toUpperCase());
+    return `<a class="alert ${colour}" href="${a.url}" target="_blank" rel="noopener"><b>${title}</b><span>SaskAlert</span></a>`;
   }).join("");
   fitTopBar();
 }
@@ -760,6 +815,7 @@ async function load() {
     state.series = buildSeries(state.wx);
     state.fetchedAt = Date.now();
     render();
+    loadSaskAlerts();
 
     // History and model data arrive a moment later
     const maxBack = Math.max(...Object.values(WINDOWS).map((w) => w[0]));
@@ -797,6 +853,7 @@ async function load() {
 
 function setLoc(loc, city) {
   state.loc = loc;
+  state.skAlerts = [];
   state.picked = city || state.picked;
   closeLocations();
   load();
